@@ -100,7 +100,7 @@ export function createServer() {
  * Returns both the app and the Node http.Server instance.
  */
 export async function startServer(
-  port = Number(process.env.PORT) || 8443
+  port = Number(process.env.WEBHOOK_PORT) || 8443
 ): Promise<{ app: express.Express; server: Server }> {
   const app = createServer();
   return new Promise((resolve) => {
