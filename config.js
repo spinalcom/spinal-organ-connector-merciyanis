@@ -31,7 +31,7 @@ module.exports = {
     userPassword: process.env.SPINAL_PASSWORD || ""
   },
   organ: {
-    name: process.env.SPINAL_ORGAN_NAME || "Organ api idposition",
-    configPath: process.env.SPINAL_CONFIG_PATH || "/etc/Organs/idposition"
+    name: process.env.SPINAL_ORGAN_NAME || "Connector merciyanis",
+    configPath: process.env.SPINAL_CONFIG_PATH || "/etc/Organs/merciyanis"
   }
 };
