@@ -26,7 +26,7 @@ import { SpinalGraphService, SpinalContext, SpinalGraph, SpinalNode } from 'spin
 import { GEO_BUILDING_TYPE, GEO_FIND_BUILDING, GEO_FLOOR_TYPE, GEO_ROOM_TYPE } from '../../constants';
 import OrganConfigModel from '../../model/OrganConfigModel';
 import IStatus from './IStatus';
-import SyncRunPullApi from './SyncRunHandler/SyncRunPullApi';
+import SyncRunPullApi from './SyncRunPullApi';
 import { join as resolvePath } from 'path';
 import { NetworkService } from "spinal-model-bmsnetwork";
 

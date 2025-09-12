@@ -1,6 +1,11 @@
 # spinal-organ-connector-merciyanis
 Simple BOS-MERCIYANIS api connector to sync ticket events
 
+https://merciyanis.notion.site/webhooks
+
+
+https://merciyanis.notion.site/rest-api
+
 ## Getting Started
 
 These instructions will guide you on how to install and make use of the spinal-organ-connector-merciyanis.

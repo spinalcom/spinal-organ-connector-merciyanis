@@ -187,7 +187,7 @@ export class ClientApi {
   }
 
   async getTickets() {
-    return this.getWithRetry<ITicketResponse>('/tickets');
+    return this.getWithRetry<ITicketResponse>('/tickets?fields=*');
   }
 
   async getLocations() {

@@ -4,6 +4,7 @@ import crypto from "crypto";
 import bodyParser from "body-parser";
 import type { Request, Response } from "express";
 import type { Server } from "http";
+import { bus } from "./utils/bus";
 
 const MERCIYANIS_SECRET = process.env.MERCIYANIS_SECRET || "";
 
@@ -77,17 +78,25 @@ export function createServer() {
     res.status(200).send("ok");
 
     // Process asynchronously
-    try {
-      switch (event) {
-        case "CREATE_TICKET":
-          console.log("CREATE_TICKET:", payload?.title ?? "(no title)");
-          break;
-        default:
-          console.log("Unhandled event:", event);
-      }
-    } catch (e) {
-      console.error("Post-ack processing failed:", e);
-    }
+    // Emit to your app after ack
+    bus.emitEvent({
+      name: event,
+      deliveryId,
+      hookId,
+      payload,
+      receivedAt: Date.now(),
+    });
+    // try {
+    //   switch (event) {
+    //     case "CREATE_TICKET":
+    //       console.log("CREATE_TICKET:", payload?.title ?? "(no title)");
+    //       break;
+    //     default:
+    //       console.log("Unhandled event:", event);
+    //   }
+    // } catch (e) {
+    //   console.error("Post-ack processing failed:", e);
+    // }
   });
 
   app.get("/", (_req, res) => res.send("Ok"));
