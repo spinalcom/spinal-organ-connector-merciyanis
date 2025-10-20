@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { ILocationResponse } from '../../interfaces/api/ILocationResponse';
 import { ITicketResponse } from '../../interfaces/api/ITicketResponse';
+import { ITicket } from '../../interfaces/api/ITicket';
 
 
 interface TokenData {
@@ -183,6 +184,24 @@ export class ClientApi {
       // bubble up with more context
       const body = e?.response?.data;
       throw new Error(`GET ${url} failed: ${status ?? 'no-status'} ${JSON.stringify(body ?? {})}`);
+    }
+  }
+
+  // PATCH
+  async updateTicket(ticketId: string, data: Partial<ITicket>): Promise<void> {
+    await this.ensureTokenValid();
+    try {
+      console.log(`Updating ticket ${ticketId} in MerciYanis ...`);
+      await this.axios.patch(`/tickets/${ticketId}`, data);
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (status === 401) {
+        await this.refreshTokenFlow();
+        await this.axios.patch(`/tickets/${ticketId}`, data);
+      } else {
+        const body = e?.response?.data;
+        throw new Error(`PATCH /tickets/${ticketId} failed: ${status ?? 'no-status'} ${JSON.stringify(body ?? {})}`);
+      }
     }
   }
 

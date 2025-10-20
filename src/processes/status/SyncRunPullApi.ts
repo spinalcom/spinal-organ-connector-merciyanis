@@ -34,16 +34,18 @@ import {
 
 import type OrganConfigModel from '../../model/OrganConfigModel';
 
-import serviceDocumentation, { attributeService } from 'spinal-env-viewer-plugin-documentation-service';
+import serviceDocumentation, {
+  attributeService,
+} from 'spinal-env-viewer-plugin-documentation-service';
 
-import { bus, WebhookEvent } from "../../utils/bus";
+import { bus, WebhookEvent } from '../../utils/bus';
 
 import { ClientApi } from '../../services/client/ClientAuth';
 
 import { spinalServiceTicket } from 'spinal-service-ticket';
 import { ITicket } from '../../interfaces/api/ITicket';
 import { TicketWebhookPayload } from '../../interfaces/api/IWebhook';
-
+import { SpinalAttribute } from 'spinal-models-documentation';
 
 /**
  * Main purpose of this class is to pull data from client.
@@ -57,18 +59,24 @@ export class SyncRunPullApi {
   interval: number;
   running: boolean;
   private apiClient: ClientApi;
-  typologies : any =  [];
+  ticketContextNode: SpinalNode<any>;
+  ticketProcessNode: SpinalNode<any>;
+  // ticketStepNewNode: SpinalNodeRef;
+  // ticketStepInProgressNode: SpinalNodeRef;
+  // ticketStepCompletedNode: SpinalNodeRef;
 
+  ticketStepNodes: SpinalNodeRef[];
   private seenDeliveries = new Set<string>(); // basic idempotency
+  private mappingSteps = new Map<string, 'NEW' | 'IN_PROGRESS' | 'COMPLETED'>(); // map<stepName, clientStepName>
 
-  constructor(
-    graph: SpinalGraph<any>,
-    config: OrganConfigModel
-  ) {
+  constructor(graph: SpinalGraph<any>, config: OrganConfigModel) {
     this.graph = graph;
     this.config = config;
     this.running = false;
     this.apiClient = ClientApi.getInstance();
+    this.mappingSteps.set('Attente de lect.avant Execution', 'NEW');
+    this.mappingSteps.set('Attente de réalisation', 'IN_PROGRESS');
+    this.mappingSteps.set('Clôturée', 'COMPLETED');
   }
 
   async getSpatialContext(): Promise<SpinalNode<any>> {
@@ -92,7 +100,7 @@ export class SyncRunPullApi {
         nb >= 0 ? nb : 0
       );
     });
-  } 
+  }
 
   async getTicketContext(): Promise<SpinalNode<any>> {
     const contexts = await this.graph.getChildren();
@@ -108,7 +116,9 @@ export class SyncRunPullApi {
 
   async getTicketProcess(processName): Promise<SpinalNode<any>> {
     const context = await this.getTicketContext();
-    const processes = await context.getChildren('SpinalSystemServiceTicketHasProcess');
+    const processes = await context.getChildren(
+      'SpinalSystemServiceTicketHasProcess'
+    );
     const ticketProcess = processes.find((proc) => {
       // @ts-ignore
       SpinalGraphService._addNode(proc);
@@ -120,126 +130,291 @@ export class SyncRunPullApi {
     return ticketProcess;
   }
 
-
   // Handler
   private onCreateTicket = async (evt: WebhookEvent<TicketWebhookPayload>) => {
     if (this.seenDeliveries.has(evt.deliveryId)) return;
     this.seenDeliveries.add(evt.deliveryId);
-    const ticketMerciYanis : ITicket = evt.payload.data as ITicket; // full ticket on creation
+    const ticketMerciYanis: ITicket = evt.payload.data as ITicket; // full ticket on creation
 
     try {
-      console.log("Handling CREATE_TICKET from bus:", ticketMerciYanis.title);
-      const ticketContext = await this.getTicketContext();
-      const ticketProcess = await this.getTicketProcess(process.env.TICKET_PROCESS_DI_NAME);
+      console.log('Handling CREATE_TICKET from bus:', ticketMerciYanis.title);
       const ticketInfo = {
-        name : `${ticketMerciYanis.title}`,
+        name: `${ticketMerciYanis.title}`,
         description: ticketMerciYanis.description,
         clientId: ticketMerciYanis._id,
         clientNumber: ticketMerciYanis._number,
         date: moment(ticketMerciYanis._createdAt).format('YYYY-MM-DD HH:mm:ss'),
         location: ticketMerciYanis.location,
-
       };
+
       console.log('Creating ticket ...');
-        const ticketNode = await spinalServiceTicket.addTicket(
-          ticketInfo,
-          ticketProcess.getId().get(),
-          ticketContext.getId().get(),
-          process.env.TMP_SPINAL_NODE_ID
-        );
-        console.log('Ticket created:', ticketNode);
+      const ticketNode = await spinalServiceTicket.addTicket(
+        ticketInfo,
+        this.ticketProcessNode.getId().get(),
+        this.ticketContextNode.getId().get(),
+        process.env.TMP_SPINAL_NODE_ID
+      );
+      console.log('Ticket created:', ticketNode);
       this.config.lastSync.set(Date.now());
-      
     } catch (e) {
-      console.error("CREATE_TICKET handler failed:", e);
+      console.error('CREATE_TICKET handler failed:', e);
       // optional: remove from seenDeliveries to allow retry logic
     }
   };
 
+  //In reality this function should not be called, as tickets are updated on Mission side
   private onUpdateTicket = async (evt: WebhookEvent<TicketWebhookPayload>) => {
     if (this.seenDeliveries.has(evt.deliveryId)) return;
     this.seenDeliveries.add(evt.deliveryId);
-    const ticketMerciYanis : Partial<ITicket> = evt.payload.data; // only contains updated fields
-    const payload : TicketWebhookPayload = evt.payload;
-
+    const payload: TicketWebhookPayload = evt.payload;
+    const ticketMerciYanis: Partial<ITicket> = evt.payload.data; // only contains updated fields
+    
     try {
-      console.log("Handling UPDATE_TICKET from bus:", evt.deliveryId);
-      const ticketContext = await this.getTicketContext();
-      const ticketProcess = await this.getTicketProcess(process.env.TICKET_PROCESS_DI_NAME);
+      console.log(
+        'Handling UPDATE_TICKET from bus:',
+        evt.deliveryId,
+        '| ID ticket :',
+        payload._ticket
+      );
+      // console.log("CHANGED FIELDS:", ticketMerciYanis);
       const ticketStatus = ticketMerciYanis.status;
-
-      
-      const steps = await spinalServiceTicket.getStepsFromProcess(ticketProcess.getId().get(),ticketContext.getId().get());
-      const step_NEW = steps.find(step => step.getName().get() === 'NEW');
-      const step_IN_PROGRESS = steps.find(step => step.getName().get() === 'IN PROGRESS');
-      const step_COMPLETED = steps.find(step => step.getName().get() === 'COMPLETED');
-
-      // !! If ticket doesn't exist maybe create it ? -- or let the pulling do it ? 
-      if (!step_NEW || !step_IN_PROGRESS || !step_COMPLETED) {
-        throw new Error('One or more required steps (NEW, IN PROGRESS, COMPLETED) not found in the ticket process.');
+      if (!ticketStatus) {
+        console.log('No status change detected, skipping update.');
+        return;
       }
-      const newTicketNodes = await step_NEW.getChildren('SpinalSystemServiceTicketHasTicket');
-      const inProgressTicketNodes = await step_IN_PROGRESS.getChildren('SpinalSystemServiceTicketHasTicket');
-      const completedTicketNodes = await step_COMPLETED.getChildren('SpinalSystemServiceTicketHasTicket');
-      const allTicketNodes = [...newTicketNodes, ...inProgressTicketNodes, ...completedTicketNodes];
-
-
-      const ticketNode = allTicketNodes.find(async (ticketNode) => {
-        ticketNode.info.clientId = ticketMerciYanis._id 
+      const allTicketNodes = await this.ticketProcessNode.findInContextByType(this.ticketContextNode, 'SpinalSystemServiceTicketTypeTicket');
+      const allTicketNodesInfo = await Promise.all(allTicketNodes.map( async (node) => {
+      const attrs = await serviceDocumentation.getAttributesByCategory(node, 'default');
+      return {
+        node: node,
+        info: attrs
+      }
+    }));
+      const {node :matchingNode, info :matchingNodeInfo} = allTicketNodesInfo.find((ticketNode) => {
+        const clientId = ticketNode.info.find((attr) => attr.label.get() === 'clientId');
+        return clientId?.value.get() === payload._ticket;
       });
-      if (!ticketNode) {
-        throw new Error(`Ticket with clientId ${ticketMerciYanis._id} not found.`);
-      };
+      if (!matchingNode) {
+        throw new Error(`Ticket with clientId ${payload._ticket} not found.`);
+      }
+      SpinalGraphService._addNode(matchingNode);
+      console.log('matchingNode:', matchingNode.getName().get());
 
-      const currentStep = steps.find(step => {
-        return step.getId().get() === ticketNode.info.stepId.get();
+      const stepInfo = matchingNodeInfo.find((attr) => attr.label.get() === 'stepId');
+      if (!stepInfo) {
+        throw new Error(`Step information not found for ticket with clientId ${payload._ticket}.`);
+      }
+      const currentStep = this.ticketStepNodes.find((step) => {
+        return step.id.get() === stepInfo?.value.get();
       });
 
-      const targetStep = steps.find(step => {
-        step.getName().get() === ticketStatus
+      const targetStep = this.ticketStepNodes.find((step) => {
+        return step.name.get() === this.getSpinalStepFromClientStep(ticketStatus);
       });
 
-      await spinalServiceTicket.moveTicket(ticketNode.getId().get(),currentStep.getId().get(),targetStep.getId().get(), ticketContext.getId().get());
+      await spinalServiceTicket.moveTicket(
+        matchingNode.getId().get(),
+        currentStep.id.get(),
+        targetStep.id.get(),
+        this.ticketContextNode.getId().get()
+      );
 
-      console.log('Ticket updated:', ticketMerciYanis._id , " to status:", ticketStatus);
+      console.log(
+        'Ticket updated:',
+        payload._ticket,
+        ' to status:',
+        targetStep.name.get()
+      );
 
       this.config.lastSync.set(Date.now());
-      
     } catch (e) {
-      console.error("UPDATE_TICKET handler failed:", e);
+      console.error('UPDATE_TICKET handler failed:', e);
       // optional: remove from seenDeliveries to allow retry logic
     }
   };
+
+  private getSpinalStepFromClientStep(clientStepName: string): string {
+    for (const [spinalStep, clientStep] of this.mappingSteps.entries()) {
+      if (clientStep === clientStepName) return spinalStep;
+    }
+    return undefined;
+  }
+
+  private convertSpinalAttributesToOject(attrs: SpinalAttribute[]): { [key: string]: string } {
+    const obj = {};
+    for(const attr of attrs) {
+      obj[attr.label.get()] = attr.value.get();
+    }
+    return obj;
+  }
+
+  checkTicketInfoObject(obj: { [key: string]: string }): boolean {
+    return obj.hasOwnProperty('clientId') && obj.hasOwnProperty('stepId');
+  }
+  
+
+  private getMatchingTicketNode(clientTicketId: string , allSpinalTickets : {node : SpinalNode<any> , info : { [key: string]: string }}[]): {node : SpinalNode<any> , info : { [key: string]: string }} | undefined {
+    for(const spinalTicket of allSpinalTickets) {
+      if (spinalTicket.info['clientId'] === clientTicketId) {
+        
+        return {node: spinalTicket.node, info: spinalTicket.info};
+      }
+    }
+    return undefined;
+  }
+
+
+  /**
+   * Sync tickets from API fetch
+   * This function should check if tickets already exist in the database
+   * If they do, update them (if need be), or create them.
+   * As I see it, this function should be called only once at init then the rest is handled by webhooks
+   * @param tickets Array of tickets fetched from API
+   */
+  private async syncFromFetch(tickets: ITicket[]) {
+
+    const allTicketNodes = await this.ticketProcessNode.findInContextByType(this.ticketContextNode, 'SpinalSystemServiceTicketTypeTicket');
+    const allTicketNodesInfo = await Promise.all(allTicketNodes.map( async (node) => {
+      const attrs = await serviceDocumentation.getAttributesByCategory(node, 'default');
+      return {
+        node: node,
+        info: this.convertSpinalAttributesToOject(attrs)
+      }
+    }));
+
+    for (const clientTicket of tickets) {
+      const {node :matchingNode, info :matchingNodeInfo} = this.getMatchingTicketNode(clientTicket._id, allTicketNodesInfo);
+      
+      if (matchingNode) {
+        const stepId = matchingNodeInfo['stepId'];
+        const currentStep = this.ticketStepNodes.find((step) => {
+          return step.id.get() === stepId;
+        });
+
+        if(currentStep.name.get() == this.getSpinalStepFromClientStep(clientTicket.status)){
+          // Ticket is already in the correct step, no action needed
+          continue;
+        }
+        if(currentStep.name.get() == 'Attente de lect.avant Execution' && clientTicket.status !== this.mappingSteps.get('Attente de lect.avant Execution')) {
+          //this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get('Attente de lect.avant Execution')});
+          continue;
+        }
+        if(currentStep.name.get() == 'Attente de réalisation' && clientTicket.status !== this.mappingSteps.get('Attente de réalisation')) {
+          //this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get('Attente de réalisation')});
+          continue;
+        }
+        if(currentStep.name.get() == 'Clôturée' && clientTicket.status !== this.mappingSteps.get('Clôturée')) {
+          //this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get('Clôturée')});
+          continue;
+          
+        }
+
+        // if we reach here, it means the ticket exists but is in a different step than expected (This situation is not normal, could it be moved manually ? )
+        console.log(`Moving ticket ${clientTicket.title} (ID: ${clientTicket._id}) from step ${currentStep.getName().get()} to ${this.getSpinalStepFromClientStep(clientTicket.status)}`);
+        const targetStepNode = this.ticketStepNodes.find((step) => {
+          return step.name.get() === this.getSpinalStepFromClientStep(clientTicket.status);
+        });
+        if (!targetStepNode) {
+          console.error(`Target step ${this.getSpinalStepFromClientStep(clientTicket.status)} not found for ticket ${clientTicket.title} (ID: ${clientTicket._id})`);
+          continue;
+        }
+        try {
+          SpinalGraphService._addNode(matchingNode);
+          await spinalServiceTicket.moveTicket(
+            matchingNode.getId().get(),
+            currentStep.id.get(),
+            targetStepNode.id.get(),
+            this.ticketContextNode.getId().get()
+          );
+          console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) moved successfully.`);
+        } catch (e) {
+          console.error(`Error moving ticket ${clientTicket.title} (ID: ${clientTicket._id}):`, e);
+        }
+        continue; // move to next ticket after handling the move
+      }
+
+      // Ticket does not exist, create it
+      console.log(
+        `Creating ticket from fetch: ${clientTicket.title} (ID: ${clientTicket._id})`
+      );
+      const ticketInfo = {
+        name: `${clientTicket.title}`,
+        description: clientTicket.description,
+        clientId: clientTicket._id,
+        clientNumber: clientTicket._number,
+        date: moment(clientTicket._createdAt).format('YYYY-MM-DD HH:mm:ss'),
+        location: clientTicket.location,
+      };
+    
+      try {
+        const ticketNode = await spinalServiceTicket.addTicket(
+          ticketInfo,
+          this.ticketProcessNode.getId().get(),
+          this.ticketContextNode.getId().get(),
+          process.env.TMP_SPINAL_NODE_ID
+        );
+        console.log('Ticket created from fetch:', ticketNode);
+      } catch (e) {
+        console.error('Error creating ticket from fetch:', e);
+      }
+    }
+  }
 
   async init(): Promise<void> {
     console.log('Initiating SyncRunPull');
     try {
-
-      bus.on("CREATE_TICKET", this.onCreateTicket);
-      bus.on("UPDATE_TICKET", this.onUpdateTicket);
-      //bus.on("DELETE_TICKET", this.onDeleteTicket)
+      // Init useful nodes
+      this.ticketContextNode = await this.getTicketContext();
+      this.ticketProcessNode = await this.getTicketProcess(
+        process.env.TICKET_PROCESS_NAME
+      );
+      this.ticketStepNodes = await spinalServiceTicket.getStepsFromProcess(
+        this.ticketProcessNode.getId().get(),
+        this.ticketContextNode.getId().get()
+      );
       
-      //const locations = await this.apiClient.getLocations();
-      //console.log(locations);
+
+      // This code is temporary, in production we will load the rooms from a group
+      const spatialContext = await this.getSpatialContext();
+      const buildings = await spatialContext.getChildren('hasGeographicBuilding');
+      if (buildings.length === 0) {
+        throw new Error('No building found in spatial context');
+      }
+      for(const building of buildings) {
+        SpinalGraphService._addNode(building);
+      }
+      
+
+
+      bus.on('CREATE_TICKET', this.onCreateTicket);
+      bus.on('UPDATE_TICKET', this.onUpdateTicket);
+      //bus.on("DELETE_TICKET", this.onDeleteTicket)
+
+      const tickets = await this.apiClient.getTickets();
+      console.log(`API tickets fetched: ${tickets.total}`);
+      this.syncFromFetch(tickets.results);
+
+      // const locations = await this.apiClient.getLocations();
+      // console.log(locations);
       this.config.lastSync.set(Date.now());
-      console.log('Init DONE !')
+      console.log('Init DONE !');
     } catch (e) {
       console.error(e);
     }
   }
 
   async run(): Promise<void> {
-    console.log("Starting run...")
+    console.log('Starting run...');
     this.running = true;
-    const timeout = parseInt(process.env.PULL_INTERVAL)
+    const timeout = parseInt(process.env.PULL_INTERVAL);
     await this.waitFct(timeout);
     while (true) {
       if (!this.running) break;
       const before = Date.now();
       try {
-        console.log("Run...");
-        
-        console.log("... Run finished !")
+        console.log('Run...');
+
+        console.log('... Run finished !');
         this.config.lastSync.set(Date.now());
       } catch (e) {
         console.error(e);
@@ -250,7 +425,6 @@ export class SyncRunPullApi {
         await this.waitFct(timeout);
       }
     }
-    
   }
 
   stop(): void {

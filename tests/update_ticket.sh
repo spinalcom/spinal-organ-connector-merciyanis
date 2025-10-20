@@ -7,7 +7,8 @@ set -euo pipefail
 URL="http://127.0.0.1:10103/webhooks/merciyanis"
 SECRET="${1}"
 
-BODY='{"title":" webhook test","description":"This is a test webhook sent from the test script.","_createdAt":"2024-10-01T12:00:00Z","_id":"id-blablabla-56","_number":"123","location":"id-location-123"}'
+# BODY='"data":{"title":" webhook test","description":"This is a test webhook sent from the test script.","_createdAt":"2024-10-01T12:00:00Z","_id":"id-blablabla-56","_number":"123","location":"id-location-123"}'
+BODY='{"_ticket":"id-blablabla-56", "data": {"status": "IN_PROGRESS"}}'
 SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print $2}')"
 
 echo "Sending webhook to $URL"
@@ -21,8 +22,6 @@ echo "Signature: $SIG"
 #   -H "X-MerciYanis-Signature: $SIG" \
 #   --data "$BODY" -i
 
-
-BODY=''
 
   curl -X POST "$URL" \
   -H "Content-Type: application/json" \
