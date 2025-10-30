@@ -139,7 +139,7 @@ export class SyncRunPullApi {
     try {
       console.log('Handling CREATE_TICKET from bus:', ticketMerciYanis.title);
       const ticketInfo = {
-        name: `${ticketMerciYanis.title}`,
+        name: `MerciYanis - ${ticketMerciYanis.title}`,
         description: ticketMerciYanis.description,
         clientId: ticketMerciYanis._id,
         clientNumber: ticketMerciYanis._number,
@@ -267,7 +267,7 @@ export class SyncRunPullApi {
   }
 
 
- private async moveTicketToCorrectStep(clientTicket: ITicket, matchingNode: SpinalNode<any>, matchingNodeInfo: { [key: string]: string }) {
+  private async updateClientTicketToCorrectStep(clientTicket: ITicket, matchingNode: SpinalNode<any>, matchingNodeInfo: { [key: string]: string }) {
     const stepId = matchingNodeInfo['stepId'];
     const currentStep = this.ticketStepNodes.find((step) => {
       return step.id.get() === stepId;
@@ -325,7 +325,10 @@ export class SyncRunPullApi {
    */
   private async syncFromFetch(tickets: ITicket[]) {
 
-    const allTicketNodes = await this.ticketProcessNode.findInContextByType(this.ticketContextNode, 'SpinalSystemServiceTicketTypeTicket');
+    const allTicketNodes = await this.ticketProcessNode.findInContext(this.ticketContextNode, (node) => {
+      return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket' && node.getName().get().includes('MerciYanis'));
+    });
+
     const allTicketNodesInfo = await Promise.all(allTicketNodes.map( async (node) => {
       const attrs = await serviceDocumentation.getAttributesByCategory(node, 'default');
       return {
@@ -337,7 +340,7 @@ export class SyncRunPullApi {
       const {node :matchingNode, info :matchingNodeInfo} = this.getMatchingTicketNode(clientTicket._id, allTicketNodesInfo) || {node: undefined, info: undefined};
       if (matchingNode) {
         console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) already exists. Checking for updates...`);
-        await this.moveTicketToCorrectStep(clientTicket, matchingNode, matchingNodeInfo);
+        await this.updateClientTicketToCorrectStep(clientTicket, matchingNode, matchingNodeInfo);
         continue; // move to next ticket after handling the move
       }
 
@@ -346,7 +349,7 @@ export class SyncRunPullApi {
         `Creating ticket from fetch: ${clientTicket.title} (ID: ${clientTicket._id})`
       );
       const ticketInfo = {
-        name: `${clientTicket.title}`,
+        name: `MerciYanis - ${clientTicket.title}`,
         description: clientTicket.description,
         clientId: clientTicket._id,
         clientNumber: clientTicket._number,
