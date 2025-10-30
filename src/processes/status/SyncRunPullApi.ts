@@ -275,7 +275,7 @@ export class SyncRunPullApi {
 
     if(currentStep.name.get() == this.getSpinalStepFromClientStep(clientTicket.status)){
       // Ticket is already in the correct step, no action needed
-      console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) is already in the correct step ${currentStep.name.get()}.`);
+      // console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) is already in the correct step ${currentStep.name.get()}.`);
       return;
     }
     if(currentStep.name.get() == 'Attente de lect.avant Execution' && clientTicket.status !== this.mappingSteps.get('Attente de lect.avant Execution')) {
