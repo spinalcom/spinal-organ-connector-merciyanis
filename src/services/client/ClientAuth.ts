@@ -13,6 +13,9 @@ interface TokenData {
   refreshTokenExpiration: string;   // ISO string
 }
 
+
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+
 export class ClientApi {
   private static instance: ClientApi;
 
@@ -206,10 +209,57 @@ export class ClientApi {
   }
 
   async getTickets() {
-    return this.getWithRetry<ITicketResponse>('/tickets?fields=*');
+    return this.getWithRetry<ITicketResponse>('/tickets?fields=*&limit=100');
   }
 
   async getLocations() {
     return this.getWithRetry<ILocationResponse>('/locations?fields=_id,name,parent,_parent2,_parent3,_parent4,_isDeleted');
+  }
+
+  async getTicketsPage(limit = 100, offset = 0): Promise<ITicketResponse> {
+    const q = new URLSearchParams({ fields: '*', limit: String(limit), offset: String(offset) });
+    return this.getWithRetry<ITicketResponse>(`/tickets?${q.toString()}`);
+  }
+
+   /**
+   * Async iterator that yields tickets page by page (one ticket at a time).
+   * Good for streaming/processing without holding everything in memory.
+   */
+  async *iterateTickets(limit = 100, {
+    pauseMs = 0,            // small delay between calls (rate-limit friendly)
+    maxPages = Infinity,    // safety guard
+  }: { pauseMs?: number; maxPages?: number } = {}) {
+    let offset = 0;
+    let fetched = 0;
+    let total = Number.POSITIVE_INFINITY;
+    let pages = 0;
+
+    while (fetched < total && pages < maxPages) {
+      const page = await this.getTicketsPage(limit, offset);
+      const items = page.results ?? [];
+
+      if (pages === 0 && typeof page.total === 'number') {
+        total = page.total;
+      }
+
+      if (items.length === 0) break;
+
+      for (const t of items) yield t;
+
+      fetched += items.length;
+      offset += items.length;
+      pages += 1;
+
+      if (pauseMs > 0) await sleep(pauseMs);
+    }
+  }
+
+  /**
+   * Collects all tickets into an array (simple wrapper over the iterator).
+   */
+  async getAllTickets(limit = 100, opts?: { pauseMs?: number; maxPages?: number }): Promise<ITicket[]> {
+    const all: ITicket[] = [];
+    for await (const t of this.iterateTickets(limit, opts)) all.push(t);
+    return all;
   }
 }
