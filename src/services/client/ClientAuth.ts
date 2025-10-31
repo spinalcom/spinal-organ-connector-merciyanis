@@ -150,7 +150,7 @@ export class ClientApi {
     return Date.now() + ClientApi.SKEW_MS >= this.expireAt;
   }
 
-  private async ensureTokenValid(): Promise<void> {
+  public async ensureTokenValid(): Promise<void> {
     if (!this.ensurePromise) {
       this.ensurePromise = (async () => {
         if (!this.accessToken) {

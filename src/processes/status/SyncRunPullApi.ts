@@ -60,14 +60,15 @@ export class SyncRunPullApi {
   running: boolean;
   private apiClient: ClientApi;
   ticketContextNode: SpinalNode<any>;
-  ticketProcessNode: SpinalNode<any>;
-  // ticketStepNewNode: SpinalNodeRef;
-  // ticketStepInProgressNode: SpinalNodeRef;
-  // ticketStepCompletedNode: SpinalNodeRef;
-
-  ticketStepNodes: SpinalNodeRef[];
+  ticketProcessNodeProprete: SpinalNode<any>;
+  ticketProcessNodePlomberie: SpinalNode<any>;
+  ticketPropreteStepNodes: SpinalNodeRef[];
+  ticketPlomberieStepNodes: SpinalNodeRef[];
   private seenDeliveries = new Set<string>(); // basic idempotency
   private mappingSteps = new Map<string, 'NEW' | 'IN_PROGRESS' | 'COMPLETED'>(); // map<stepName, clientStepName>
+
+  private allStepNames = ['Attente de lect.avant Execution','Attente de réalisation', 'Réalisation partielle','Clôturée']
+  
 
   constructor(graph: SpinalGraph<any>, config: OrganConfigModel) {
     this.graph = graph;
@@ -130,7 +131,7 @@ export class SyncRunPullApi {
     return ticketProcess;
   }
 
-  // Handler
+  
   private onCreateTicket = async (evt: WebhookEvent<TicketWebhookPayload>) => {
     if (this.seenDeliveries.has(evt.deliveryId)) return;
     this.seenDeliveries.add(evt.deliveryId);
@@ -150,7 +151,7 @@ export class SyncRunPullApi {
       console.log('Creating ticket ...');
       const ticketNode = await spinalServiceTicket.addTicket(
         ticketInfo,
-        this.ticketProcessNode.getId().get(),
+        this.ticketProcessNodeProprete.getId().get(),
         this.ticketContextNode.getId().get(),
         process.env.TMP_SPINAL_NODE_ID
       );
@@ -162,7 +163,10 @@ export class SyncRunPullApi {
     }
   };
 
-  //In reality this function should not be called, as tickets are updated on Mission side
+  /**
+   * This function handles the UPDATE_TICKET webhook event.
+   * It updates the corresponding ticket in Spinal if the status has changed
+   */
   private onUpdateTicket = async (evt: WebhookEvent<TicketWebhookPayload>) => {
     if (this.seenDeliveries.has(evt.deliveryId)) return;
     this.seenDeliveries.add(evt.deliveryId);
@@ -182,7 +186,7 @@ export class SyncRunPullApi {
         console.log('No status change detected, skipping update.');
         return;
       }
-      const allTicketNodes = await this.ticketProcessNode.findInContextByType(this.ticketContextNode, 'SpinalSystemServiceTicketTypeTicket');
+      const allTicketNodes = await this.ticketProcessNodeProprete.findInContextByType(this.ticketContextNode, 'SpinalSystemServiceTicketTypeTicket');
       const allTicketNodesInfo = await Promise.all(allTicketNodes.map( async (node) => {
       const attrs = await serviceDocumentation.getAttributesByCategory(node, 'default');
       return {
@@ -204,11 +208,11 @@ export class SyncRunPullApi {
       if (!stepInfo) {
         throw new Error(`Step information not found for ticket with clientId ${payload._ticket}.`);
       }
-      const currentStep = this.ticketStepNodes.find((step) => {
+      const currentStep = this.ticketPropreteStepNodes.find((step) => {
         return step.id.get() === stepInfo?.value.get();
       });
 
-      const targetStep = this.ticketStepNodes.find((step) => {
+      const targetStep = this.ticketPropreteStepNodes.find((step) => {
         return step.name.get() === this.getSpinalStepFromClientStep(ticketStatus);
       });
 
@@ -267,9 +271,14 @@ export class SyncRunPullApi {
   }
 
 
-  private async updateClientTicketToCorrectStep(clientTicket: ITicket, matchingNode: SpinalNode<any>, matchingNodeInfo: { [key: string]: string }) {
+  /**
+   * This function updates MerciYanis when the ticket in hub is more up-to-date than in MY.
+   * Requirement 1 : We have to be sure that the clientTicket recieved by this function is the most up-to-date
+   * MY status for this ticket
+   */
+  private async updateMerciYanisTicketToCorrectStep(clientTicket: ITicket, matchingNode: SpinalNode<any>, matchingNodeInfo: { [key: string]: string }) {
     const stepId = matchingNodeInfo['stepId'];
-    const currentStep = this.ticketStepNodes.find((step) => {
+    const currentStep = this.ticketPropreteStepNodes.find((step) => {
       return step.id.get() === stepId;
     });
 
@@ -278,41 +287,38 @@ export class SyncRunPullApi {
       // console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) is already in the correct step ${currentStep.name.get()}.`);
       return;
     }
-    if(currentStep.name.get() == 'Attente de lect.avant Execution' && clientTicket.status !== this.mappingSteps.get('Attente de lect.avant Execution')) {
-      //this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get('Attente de lect.avant Execution')});
+    // Check if client status is inferior to current step
+    const currentStepIndex = this.allStepNames.indexOf(currentStep.name.get());
+    const clientStepIndex = this.allStepNames.indexOf(this.getSpinalStepFromClientStep(clientTicket.status));
+    if (clientStepIndex < currentStepIndex) {
+      // Client status is behind current step, skip or handle accordingly
+      // !!!!!!!!!!!!! UNCOMMENT THIS LINE LATER IF YOU WANT TO UPDATE CLIENT TICKET STATUS !!!!!!!!!!!!!
+      //this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get(currentStep.name.get())});
       return;
     }
-    if(currentStep.name.get() == 'Attente de réalisation' && clientTicket.status !== this.mappingSteps.get('Attente de réalisation')) {
-      //this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get('Attente de réalisation')});
-      return;
-    }
-    if(currentStep.name.get() == 'Clôturée' && clientTicket.status !== this.mappingSteps.get('Clôturée')) {
-      //this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get('Clôturée')});
-      return;
-      
-    }
-
-    // if we reach here, it means the ticket exists but is in a different step than expected (This situation is not normal, could it be it was moved manually ? idk)
-    console.log(`Moving ticket ${clientTicket.title} (ID: ${clientTicket._id}) from step ${currentStep.getName().get()} to ${this.getSpinalStepFromClientStep(clientTicket.status)}`);
-    const targetStepNode = this.ticketStepNodes.find((step) => {
-      return step.name.get() === this.getSpinalStepFromClientStep(clientTicket.status);
-    });
-    if (!targetStepNode) {
-      console.error(`Target step ${this.getSpinalStepFromClientStep(clientTicket.status)} not found for ticket ${clientTicket.title} (ID: ${clientTicket._id})`);
-      return;
-    }
-    try {
-      SpinalGraphService._addNode(matchingNode);
-      await spinalServiceTicket.moveTicket(
-        matchingNode.getId().get(),
-        currentStep.id.get(),
-        targetStepNode.id.get(),
-        this.ticketContextNode.getId().get()
-      );
-      console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) moved successfully.`);
-    } catch (e) {
-      console.error(`Error moving ticket ${clientTicket.title} (ID: ${clientTicket._id}):`, e);
-    }
+    
+    // if we reach here, it means the ticket exists but is in a different step than expected
+    console.error('Ticket is in a different step than expected');
+    // console.log(`Moving ticket ${clientTicket.title} (ID: ${clientTicket._id}) from step ${currentStep.getName().get()} to ${this.getSpinalStepFromClientStep(clientTicket.status)}`);
+    // const targetStepNode = this.ticketPropreteStepNodes.find((step) => {
+    //   return step.name.get() === this.getSpinalStepFromClientStep(clientTicket.status);
+    // });
+    // if (!targetStepNode) {
+    //   console.error(`Target step ${this.getSpinalStepFromClientStep(clientTicket.status)} not found for ticket ${clientTicket.title} (ID: ${clientTicket._id})`);
+    //   return;
+    // }
+    // try {
+    //   SpinalGraphService._addNode(matchingNode);
+    //   await spinalServiceTicket.moveTicket(
+    //     matchingNode.getId().get(),
+    //     currentStep.id.get(),
+    //     targetStepNode.id.get(),
+    //     this.ticketContextNode.getId().get()
+    //   );
+    //   console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) moved successfully.`);
+    // } catch (e) {
+    //   console.error(`Error moving ticket ${clientTicket.title} (ID: ${clientTicket._id}):`, e);
+    // }
   }
 
 
@@ -325,7 +331,7 @@ export class SyncRunPullApi {
    */
   private async syncFromFetch(tickets: ITicket[]) {
 
-    const allTicketNodes = await this.ticketProcessNode.findInContext(this.ticketContextNode, (node) => {
+    const allTicketNodes = await this.ticketProcessNodeProprete.findInContext(this.ticketContextNode, (node) => {
       return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket' && node.getName().get().includes('MerciYanis'));
     });
 
@@ -340,7 +346,7 @@ export class SyncRunPullApi {
       const {node :matchingNode, info :matchingNodeInfo} = this.getMatchingTicketNode(clientTicket._id, allTicketNodesInfo) || {node: undefined, info: undefined};
       if (matchingNode) {
         console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) already exists. Checking for updates...`);
-        await this.updateClientTicketToCorrectStep(clientTicket, matchingNode, matchingNodeInfo);
+        await this.updateMerciYanisTicketToCorrectStep(clientTicket, matchingNode, matchingNodeInfo);
         continue; // move to next ticket after handling the move
       }
 
@@ -360,15 +366,15 @@ export class SyncRunPullApi {
       try {
         const ticketNodeId = await spinalServiceTicket.addTicket(
           ticketInfo,
-          this.ticketProcessNode.getId().get(),
+          this.ticketProcessNodeProprete.getId().get(),
           this.ticketContextNode.getId().get(),
           process.env.TMP_SPINAL_NODE_ID
         );
         console.log('Ticket created from fetch:', ticketNodeId);
         await spinalServiceTicket.moveTicket(
           ticketNodeId,
-          this.ticketStepNodes[0].id.get(), // assuming first step is 'NEW'
-          this.ticketStepNodes.find(step => step.name.get() === this.getSpinalStepFromClientStep(clientTicket.status)).id.get(),
+          this.ticketPropreteStepNodes[0].id.get(), // assuming first step is 'NEW'
+          this.ticketPropreteStepNodes.find(step => step.name.get() === this.getSpinalStepFromClientStep(clientTicket.status)).id.get(),
           this.ticketContextNode.getId().get()
         );
 
@@ -383,14 +389,21 @@ export class SyncRunPullApi {
     try {
       // Init useful nodes
       this.ticketContextNode = await this.getTicketContext();
-      this.ticketProcessNode = await this.getTicketProcess(
-        process.env.TICKET_PROCESS_NAME
+      this.ticketProcessNodeProprete = await this.getTicketProcess(
+        process.env.TICKET_PROCESS_PROPRETE
       );
-      this.ticketStepNodes = await spinalServiceTicket.getStepsFromProcess(
-        this.ticketProcessNode.getId().get(),
+      this.ticketProcessNodePlomberie = await this.getTicketProcess(
+        process.env.TICKET_PROCESS_PLOMBERIE
+      );
+      this.ticketPropreteStepNodes = await spinalServiceTicket.getStepsFromProcess(
+        this.ticketProcessNodeProprete.getId().get(),
         this.ticketContextNode.getId().get()
       );
-      
+      this.ticketPlomberieStepNodes = await spinalServiceTicket.getStepsFromProcess(
+        this.ticketProcessNodePlomberie.getId().get(),
+        this.ticketContextNode.getId().get()
+      );
+
 
       // This code is temporary, in production we will load the rooms from a group
       const spatialContext = await this.getSpatialContext();
@@ -408,7 +421,8 @@ export class SyncRunPullApi {
       bus.on('UPDATE_TICKET', this.onUpdateTicket);
       //bus.on("DELETE_TICKET", this.onDeleteTicket)
 
-      // const tickets = await this.apiClient.getTickets();
+
+      // this.apiClient.ensureTokenValid();
       const tickets = await this.apiClient.getAllTickets();
       console.log(`API tickets fetched: ${tickets.length}`);
       await this.syncFromFetch(tickets);
