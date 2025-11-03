@@ -45,6 +45,6 @@
     "spinal-env-viewer-plugin-documentation-service": "spinal-env-viewer-plugin-documentation-service",
     "spinal-env-viewer-plugin-group-manager-service": "spinal-env-viewer-plugin-group-manager-service",
     "spinal-lib-organ-monitoring": "spinal-lib-organ-monitoring",
-    "spinal-service-ticket": "spinal-service-ticket"
+    "spinal-service-ticket": "spinal-service-ticket@v0"
   }
 }
