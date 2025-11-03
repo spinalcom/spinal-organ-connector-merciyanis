@@ -62,13 +62,23 @@ export class SyncRunPullApi {
   ticketContextNode: SpinalNode<any>;
   ticketProcessNodeProprete: SpinalNode<any>;
   ticketProcessNodePlomberie: SpinalNode<any>;
+  ticketProcessNodeElectricite: SpinalNode<any>;
+
   ticketPropreteStepNodes: SpinalNodeRef[];
   ticketPlomberieStepNodes: SpinalNodeRef[];
+  ticketElectriciteStepNodes: SpinalNodeRef[];
+
   private seenDeliveries = new Set<string>(); // basic idempotency
   private mappingSteps = new Map<string, 'NEW' | 'IN_PROGRESS' | 'COMPLETED'>(); // map<stepName, clientStepName>
 
   private allStepNames = ['Attente de lect.avant Execution','Attente de réalisation', 'Réalisation partielle','Clôturée']
   
+  private ticketNamesProprete = ['Consommables','Propreté','Comptage de passage']
+  private ticketNamesPlomberie = ["Fuite d'eau / Robinetterie"]
+  private ticketNamesElectricite = ["Eclairage"]
+
+
+
 
   constructor(graph: SpinalGraph<any>, config: OrganConfigModel) {
     this.graph = graph;
@@ -131,7 +141,33 @@ export class SyncRunPullApi {
     return ticketProcess;
   }
 
+  private getProcessNodeFromTicketName(ticketName : string) :SpinalNode<any> {
+    if(this.ticketNamesPlomberie.includes(ticketName)) {
+      return this.ticketProcessNodePlomberie;
+    }
+    else if (this.ticketNamesElectricite.includes(ticketName)) {
+      return this.ticketProcessNodeElectricite;
+    }
+    // default
+    else {
+      return this.ticketProcessNodeProprete;
+    }
+  }
+
+  private getStepsFromTicketName(ticketName: string): SpinalNodeRef[] {
+    if(this.ticketNamesPlomberie.includes(ticketName)) {
+      return this.ticketPlomberieStepNodes;
+    }
+    else if (this.ticketNamesElectricite.includes(ticketName)) {
+      return this.ticketElectriciteStepNodes;
+    }
+    // default
+    else {
+      return this.ticketPropreteStepNodes;
+    }
+  }
   
+
   private onCreateTicket = async (evt: WebhookEvent<TicketWebhookPayload>) => {
     if (this.seenDeliveries.has(evt.deliveryId)) return;
     this.seenDeliveries.add(evt.deliveryId);
@@ -140,22 +176,25 @@ export class SyncRunPullApi {
     try {
       console.log('Handling CREATE_TICKET from bus:', ticketMerciYanis.title);
       const ticketInfo = {
-        name: `MerciYanis - ${ticketMerciYanis.title}`,
+        name: ticketMerciYanis.title.trim(),
         description: ticketMerciYanis.description,
         MYId: ticketMerciYanis._id,
         MYNumber: ticketMerciYanis._number,
         date: moment(ticketMerciYanis._createdAt).format('YYYY-MM-DD HH:mm:ss'),
         location: ticketMerciYanis.location,
+        declarer_id : 'MerciYanis'
       };
+      if(ticketMerciYanis.title.trim() === 'Comptage de passage'){
+        ticketInfo['gmaoId'] = -1;
+      }
 
-      console.log('Creating ticket ...');
-      const ticketNode = await spinalServiceTicket.addTicket(
+      const ticketNodeId  = await spinalServiceTicket.addTicket(
         ticketInfo,
-        this.ticketProcessNodeProprete.getId().get(),
+        this.getProcessNodeFromTicketName(ticketMerciYanis.title).getId().get(),
         this.ticketContextNode.getId().get(),
         process.env.TMP_SPINAL_NODE_ID
       );
-      console.log('Ticket created:', ticketNode);
+      console.log('Ticket created:', ticketNodeId);
       this.config.lastSync.set(Date.now());
     } catch (e) {
       console.error('CREATE_TICKET handler failed:', e);
@@ -234,32 +273,10 @@ export class SyncRunPullApi {
     return undefined;
   }
 
-  private convertSpinalAttributesToOject(attrs: SpinalAttribute[]): { [key: string]: string } {
-    const obj = {};
-    for(const attr of attrs) {
-      obj[attr.label.get()] = attr.value.get();
-    }
-    return obj;
-  }
-
   checkTicketInfoObject(obj: { [key: string]: string }): boolean {
     return obj.hasOwnProperty('clientId') && obj.hasOwnProperty('stepId');
   }
   
-
-  /**
-   *  Get the spinal ticket node that matches the client ticket id
-   */
-  private getMatchingTicketNode(clientTicketId: string , allSpinalTickets : {node : SpinalNode<any> , info : { [key: string]: string }}[]): {node : SpinalNode<any> , info : { [key: string]: string }} | undefined {
-    for(const spinalTicket of allSpinalTickets) {
-      if (spinalTicket.info['clientId'] === clientTicketId) {
-        
-        return {node: spinalTicket.node, info: spinalTicket.info};
-      }
-    }
-    return undefined;
-  }
-
 
   /**
    * This function updates MerciYanis when the ticket in hub is more up-to-date than in MY.
@@ -340,18 +357,23 @@ export class SyncRunPullApi {
         `Creating ticket from fetch: ${clientTicket.title} (ID: ${clientTicket._id})`
       );
       const ticketInfo = {
-        name: `MerciYanis - ${clientTicket.title}`,
+        name: clientTicket.title.trim(),
         description: clientTicket.description,
         MYId: clientTicket._id,
         MYNumber: clientTicket._number,
         date: moment(clientTicket._createdAt).format('YYYY-MM-DD HH:mm:ss'),
         location: clientTicket.location,
+        declarer_id : 'MerciYanis'
       };
+
+      if(clientTicket.title.trim() === 'Comptage de passage'){
+        ticketInfo['gmaoId'] = -1;
+      }
     
       try {
         const ticketNodeId = await spinalServiceTicket.addTicket(
           ticketInfo,
-          this.ticketProcessNodeProprete.getId().get(),
+          this.getProcessNodeFromTicketName(clientTicket.title).getId().get(),
           this.ticketContextNode.getId().get(),
           process.env.TMP_SPINAL_NODE_ID
         );
@@ -359,12 +381,15 @@ export class SyncRunPullApi {
         if(typeof ticketNodeId !== 'string') {
           throw new Error('The spinal ticket creation did not return a valid ticket node id');
         }
-        await spinalServiceTicket.moveTicket(
-          ticketNodeId,
-          this.ticketPropreteStepNodes[0].id.get(), // assuming first step is 'NEW'
-          this.ticketPropreteStepNodes.find(step => step.name.get() === this.getSpinalStepFromClientStep(clientTicket.status)).id.get(),
-          this.ticketContextNode.getId().get()
-        );
+
+        if(clientTicket.status != 'NEW') {
+          await spinalServiceTicket.moveTicket(
+            ticketNodeId,
+            this.getStepsFromTicketName(clientTicket.title)[0].id.get(), // assuming first step is 'NEW'
+            this.getStepsFromTicketName(clientTicket.title).find(step => step.name.get() === this.getSpinalStepFromClientStep(clientTicket.status)).id.get(),
+            this.ticketContextNode.getId().get()
+          );
+      }
 
       } catch (e) {
         console.error('Error creating ticket from fetch:', e);
@@ -383,6 +408,11 @@ export class SyncRunPullApi {
       this.ticketProcessNodePlomberie = await this.getTicketProcess(
         process.env.TICKET_PROCESS_PLOMBERIE
       );
+
+      this.ticketProcessNodeElectricite = await this.getTicketProcess(
+        process.env.TICKET_PROCESS_ELEC
+      );
+
       this.ticketPropreteStepNodes = await spinalServiceTicket.getStepsFromProcess(
         this.ticketProcessNodeProprete.getId().get(),
         this.ticketContextNode.getId().get()
@@ -391,7 +421,10 @@ export class SyncRunPullApi {
         this.ticketProcessNodePlomberie.getId().get(),
         this.ticketContextNode.getId().get()
       );
-
+      this.ticketElectriciteStepNodes = await spinalServiceTicket.getStepsFromProcess(
+        this.ticketProcessNodeElectricite.getId().get(),
+        this.ticketContextNode.getId().get()
+      );
 
       // This code is temporary, in production we will load the rooms from a group
       const spatialContext = await this.getSpatialContext();
