@@ -1,3 +1,6 @@
+import { ILocation } from "./ILocation";
+
+
 /**
  * A typical ticket structure in MerciYanis.
  */
@@ -56,7 +59,7 @@ export interface ITicket {
   /**
    * Final location the ticket belongs to.
    */
-  location: string | Location | null;
+  location: ILocation | null;
 
   /**
    * Ticket category.

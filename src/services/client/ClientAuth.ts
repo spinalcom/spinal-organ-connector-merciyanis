@@ -209,7 +209,7 @@ export class ClientApi {
   }
 
   async getTickets() {
-    return this.getWithRetry<ITicketResponse>('/tickets?fields=*&limit=100');
+    return this.getWithRetry<ITicketResponse>('/tickets?fields=title,description,_number,_createdAt,status,location.parent.name&limit=100&offset=300');
   }
 
   async getLocations() {
@@ -217,7 +217,7 @@ export class ClientApi {
   }
 
   async getTicketsPage(limit = 100, offset = 0): Promise<ITicketResponse> {
-    const q = new URLSearchParams({ fields: '*', limit: String(limit), offset: String(offset) });
+    const q = new URLSearchParams({ fields: 'title,description,_number,_createdAt,status,location.parent.name', limit: String(limit), offset: String(offset) });
     return this.getWithRetry<ITicketResponse>(`/tickets?${q.toString()}`);
   }
 

@@ -40,5 +40,5 @@ export interface ILocation {
   /**
    * Parent location this location belongs to, if any.
    */
-  parent: string | ILocation | null;
+  parent: ILocation | null;
 }
