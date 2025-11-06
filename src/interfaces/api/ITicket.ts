@@ -54,7 +54,7 @@ export interface ITicket {
   /**
    * Ticket status in the completion workflow.
    */
-  status: 'NEW' | 'IN_PROGRESS' | 'COMPLETED';
+  status: 'NEW' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED';
 
   /**
    * Final location the ticket belongs to.

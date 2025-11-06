@@ -69,9 +69,10 @@ export class SyncRunPullApi {
   private ticketElectriciteStepNodes: SpinalNodeRef[];
 
   private seenDeliveries = new Set<string>(); // basic idempotency
-  private mappingSteps = new Map<string, 'NEW' | 'IN_PROGRESS' | 'COMPLETED'>(); // map<stepName, clientStepName>
+  private mappingSteps = new Map<string, 'NEW' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED'>(); // map<stepName, clientStepName>
   private mappingTicketNames = new Map<string, { ticketName : string, processName: string }>();
   private allStepNames = ['Attente de lect.avant Execution','Attente de réalisation', 'Réalisation partielle','Clôturée','Refusée']
+  private allClientStepNames = ['NEW','PENDING','IN_PROGRESS','COMPLETED','COMPLETED']
   private ticketNamesProprete = ['Consommables','Propreté','Comptage de passage']
   private ticketNamesPlomberie = ["Fuite d'eau / Robinetterie"]
   private ticketNamesElectricite = ["Eclairage"]
@@ -90,7 +91,7 @@ export class SyncRunPullApi {
     this.running = false;
     this.apiClient = ClientApi.getInstance();
     this.mappingSteps.set('Attente de lect.avant Execution', 'NEW');
-    this.mappingSteps.set('Attente de réalisation', 'IN_PROGRESS');
+    this.mappingSteps.set('Attente de réalisation', 'PENDING');
     this.mappingSteps.set('Réalisation partielle', 'IN_PROGRESS');
     this.mappingSteps.set('Clôturée', 'COMPLETED');
     this.mappingSteps.set('Refusée', 'COMPLETED');
@@ -310,7 +311,6 @@ export class SyncRunPullApi {
         return;
       }
       SpinalGraphService._addNode(matchingNode);
-      console.log('matchingNode:', matchingNode.getName().get());
 
       const currentStepId = matchingNode.info.stepId.get();
       if (!currentStepId) {
@@ -369,16 +369,31 @@ export class SyncRunPullApi {
 
     // Check if client status is inferior to current step
     const currentStepIndex = this.allStepNames.indexOf(currentStep.name.get());
-    if ( clientTicket.status === 'NEW' && currentStepIndex > 0) {
-      console.log(`Ticket (ID: ${clientTicket._id}) GMAO_ID : ${matchingNode.info.gmaoId?.get()} SERVER_ID : ${matchingNode._serverId} status in MerciYanis is behind the current step in Spinal (${clientTicket.status} < ${currentStep.name.get()}). Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
-      this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get(currentStep.name.get())});
+    const currentClientStepIndex = this.allClientStepNames.lastIndexOf(clientTicket.status);
+    if( currentClientStepIndex === -1){
+      console.error(`Unknown client ticket status: ${clientTicket.status} for ticket ID: ${clientTicket._id}`);
       return;
     }
-    if (clientTicket.status === 'IN_PROGRESS' && currentStepIndex > 2) {
-      console.log(`Ticket (ID: ${clientTicket._id}) GMAO_ID : ${matchingNode.info.gmaoId?.get()} SERVER_ID : ${matchingNode._serverId} status in MerciYanis is behind the current step in Spinal (${clientTicket.status} < ${currentStep.name.get()}). Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
+
+    if( currentClientStepIndex < currentStepIndex) {
+      console.log(`Ticket (ID: ${clientTicket._id} | ${clientTicket._number}) 
+        GMAO_ID : ${matchingNode.info.gmaoId?.get()} 
+        SERVER_ID : ${matchingNode._serverId} 
+        status in MerciYanis is behind the current step in Spinal 
+        (${clientTicket.status} < ${currentStep.name.get()}). 
+        Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
       this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get(currentStep.name.get())});
-      return;
     }
+    // if ( clientTicket.status === 'NEW' && currentStepIndex > 0) {
+    //   console.log(`Ticket (ID: ${clientTicket._id} | ${clientTicket._number}) GMAO_ID : ${matchingNode.info.gmaoId?.get()} SERVER_ID : ${matchingNode._serverId} status in MerciYanis is behind the current step in Spinal (${clientTicket.status} < ${currentStep.name.get()}). Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
+    //   this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get(currentStep.name.get())});
+    //   return;
+    // }
+    // if (clientTicket.status === 'IN_PROGRESS' && currentStepIndex > 2) {
+    //   console.log(`Ticket (ID: ${clientTicket._id} | ${clientTicket._number}) GMAO_ID : ${matchingNode.info.gmaoId?.get()} SERVER_ID : ${matchingNode._serverId} status in MerciYanis is behind the current step in Spinal (${clientTicket.status} < ${currentStep.name.get()}). Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
+    //   this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get(currentStep.name.get())});
+    //   return;
+    // }
 
     return;
   }
@@ -410,13 +425,9 @@ export class SyncRunPullApi {
 
     const allTicketNodes = [...propreteTickets, ...plomberieTickets, ...electriciteTickets];
 
-    // const allTicketNodes = await this.ticketProcessNodeProprete.findInContext(this.ticketContextNode, (node) => {
-    //   return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket' && node.info.MYId.get() != undefined);
-    // });
-
     for (const clientTicket of tickets) {
       const matchingNode = allTicketNodes.find((ticketNode) => {
-        return ticketNode.info.MYId.get() === clientTicket._id;
+        return ticketNode.info.MYId?.get() === clientTicket._id;
       })
       if (matchingNode) {
         // console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) already exists. Checking for updates...`);
