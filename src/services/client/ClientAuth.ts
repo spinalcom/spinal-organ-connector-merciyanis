@@ -213,7 +213,7 @@ export class ClientApi {
   }
 
   async getLocations() {
-    return this.getWithRetry<ILocationResponse>('/locations?fields=_id,name,parent,_parent2,_parent3,_parent4,_isDeleted');
+    return this.getWithRetry<ILocationResponse>('/locations?fields=*&limit=100');
   }
 
   async getTicketsPage(limit = 100, offset = 0): Promise<ITicketResponse> {
