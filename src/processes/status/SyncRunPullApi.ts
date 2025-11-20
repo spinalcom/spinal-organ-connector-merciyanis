@@ -307,7 +307,7 @@ export class SyncRunPullApi {
       if (!matchingNode) {
         throw new Error(`Ticket with MYId ${payload._ticket} not found.`);
       }
-      if(matchingNode.getName().get().includes('Comptage de passage')){
+      if(!matchingNode.getName().get().includes('Comptage de passage')){
         return;
       }
       SpinalGraphService._addNode(matchingNode);
