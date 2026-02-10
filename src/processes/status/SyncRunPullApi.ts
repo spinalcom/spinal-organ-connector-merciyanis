@@ -232,7 +232,10 @@ export class SyncRunPullApi {
     const ticketMerciYanis: ITicket = evt.payload.data as ITicket; // full ticket on creation
 
     try {
-
+      if(ticketMerciYanis.title.trim() === 'Comptage de passage') {
+        console.log('Ignoring CREATE_TICKET for Comptage de passage');
+        return;
+      }
 
       const location_child = this.MYLocations.find(loc => loc._id === ticketMerciYanis.location);
       if(!location_child){
@@ -307,7 +310,7 @@ export class SyncRunPullApi {
       if (!matchingNode) {
         throw new Error(`Ticket with MYId ${payload._ticket} not found.`);
       }
-      if(!matchingNode.getName().get().includes('Comptage de passage')){
+      if(matchingNode.getName().get().includes('Comptage de passage')){
         return;
       }
       SpinalGraphService._addNode(matchingNode);
@@ -445,7 +448,7 @@ export class SyncRunPullApi {
       // );
       const ticketInfo = {
         name: this.mappingTicketNames.get(clientTicket.title.trim())?.ticketName || clientTicket.title.trim(),
-        description: clientTicket.description,
+        description: clientTicket.description || '',
         MYId: clientTicket._id,
         MYNumber: clientTicket._number,
         date: moment(clientTicket._createdAt).format('YYYY-MM-DD HH:mm:ss'),
@@ -527,10 +530,13 @@ export class SyncRunPullApi {
 
       const locations = await this.apiClient.getLocations();
       this.MYLocations = locations.results;
-      // const tickets = await this.apiClient.getAllTickets();
+      const tickets = await this.apiClient.getAllTickets();
+      const filteredTickets = tickets.filter( ticket => { // we only keep non 'Comptage de passage' tickets
+        return ticket.title.trim() !== 'Comptage de passage';
+      })
       // const tickets = (await this.apiClient.getTickets()).results;
-      // console.log(`API tickets fetched: ${tickets.length}`);
-      // await this.syncFromFetch(tickets);
+      console.log(`API tickets fetched: ${filteredTickets.length}`);
+      await this.syncFromFetch(filteredTickets);
 
       // const locations = await this.apiClient.getLocations();
       // console.log(locations);
@@ -552,9 +558,12 @@ export class SyncRunPullApi {
       try {
         console.log('Run...');
         const tickets = await this.apiClient.getAllTickets();
+        const filteredTickets = tickets.filter( ticket => { // we only keep non 'Comptage de passage' tickets
+          return ticket.title.trim() !== 'Comptage de passage';
+        })
         //const tickets = (await this.apiClient.getTickets()).results;
-        console.log(`API tickets fetched: ${tickets.length}`);
-        await this.syncFromFetch(tickets,true);
+        console.log(`API tickets fetched: ${filteredTickets.length}`);
+        await this.syncFromFetch(filteredTickets,true);
 
         console.log('... Run finished !');
         this.config.lastSync.set(Date.now());
