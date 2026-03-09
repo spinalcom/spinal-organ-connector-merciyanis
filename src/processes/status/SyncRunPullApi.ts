@@ -70,16 +70,16 @@ export class SyncRunPullApi {
 
   private seenDeliveries = new Set<string>(); // basic idempotency
   private mappingSteps = new Map<string, 'NEW' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED'>(); // map<stepName, clientStepName>
-  private mappingTicketNames = new Map<string, { ticketName : string, processName: string }>();
-  private allStepNames = ['Attente de lect.avant Execution','Attente de réalisation', 'Réalisation partielle','Clôturée','Refusée']
-  private allClientStepNames = ['NEW','PENDING','IN_PROGRESS','COMPLETED','COMPLETED']
-  private ticketNamesProprete = ['Consommables','Propreté','Comptage de passage']
+  private mappingTicketNames = new Map<string, { ticketName: string, processName: string }>();
+  private allStepNames = ['Attente de lect.avant Execution', 'Attente de réalisation', 'Réalisation partielle', 'Clôturée', 'Refusée']
+  private allClientStepNames = ['NEW', 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'COMPLETED']
+  private ticketNamesProprete = ['Consommables', 'Propreté', 'Comptage de passage']
   private ticketNamesPlomberie = ["Fuite d'eau / Robinetterie"]
   private ticketNamesElectricite = ["Eclairage"]
 
-  private roomNodes : SpinalNode<any>[] = [];
+  private roomNodes: SpinalNode<any>[] = [];
 
-  private MYLocations : any[] = [];
+  private MYLocations: any[] = [];
 
 
 
@@ -96,11 +96,11 @@ export class SyncRunPullApi {
     this.mappingSteps.set('Clôturée', 'COMPLETED');
     this.mappingSteps.set('Refusée', 'COMPLETED');
 
-    this.mappingTicketNames.set('Consommables', { ticketName :'CNP-Consommable sanitaires' , processName : process.env.TICKET_PROCESS_PROPRETE });
-    this.mappingTicketNames.set('Propreté', { ticketName : 'CNP-Problème propreté', processName : process.env.TICKET_PROCESS_PROPRETE });
-    this.mappingTicketNames.set('Comptage de passage', { ticketName : 'CNP-Comptage de passage', processName : process.env.TICKET_PROCESS_PROPRETE });
-    this.mappingTicketNames.set("Fuite d'eau / Robinetterie", { ticketName : "CNP-Fuite d'eau", processName : process.env.TICKET_PROCESS_PLOMBERIE });
-    this.mappingTicketNames.set('Eclairage', { ticketName : "CNP-Défaut d'éclairage", processName : process.env.TICKET_PROCESS_ELEC });
+    this.mappingTicketNames.set('Consommables', { ticketName: 'CNP-Consommable sanitaires', processName: process.env.TICKET_PROCESS_PROPRETE });
+    this.mappingTicketNames.set('Propreté', { ticketName: 'CNP-Problème propreté', processName: process.env.TICKET_PROCESS_PROPRETE });
+    this.mappingTicketNames.set('Comptage de passage', { ticketName: 'CNP-Comptage de passage', processName: process.env.TICKET_PROCESS_PROPRETE });
+    this.mappingTicketNames.set("Fuite d'eau / Robinetterie", { ticketName: "CNP-Fuite d'eau", processName: process.env.TICKET_PROCESS_PLOMBERIE });
+    this.mappingTicketNames.set('Eclairage', { ticketName: "CNP-Défaut d'éclairage", processName: process.env.TICKET_PROCESS_ELEC });
 
   }
 
@@ -160,27 +160,27 @@ export class SyncRunPullApi {
     const context = contexts.find((context) => {
       return context.getName().get() === process.env.ROOM_CONTEXT_NAME;
     })
-    if(!context) {
+    if (!context) {
       throw new Error('Room Context Not found');
     }
     const categories = await context.getChildren('hasCategory')
     const category = categories.find((cat) => {
       return cat.getName().get() === process.env.ROOM_CATEGORY_NAME;
     });
-    if(!category) {
+    if (!category) {
       throw new Error('Room Category Not found');
     }
     const groups = await category.getChildren('hasGroup');
     const group = groups.find((grp) => {
       return grp.getName().get() === process.env.ROOM_GROUP_NAME;
     });
-    if(!group) {
+    if (!group) {
       throw new Error('Room Group Not found');
     }
-    
+
     const rooms = await group.getChildren('groupHasgeographicRoom')
 
-    for(const room of rooms){
+    for (const room of rooms) {
       SpinalGraphService._addNode(room);
     }
     return rooms;
@@ -188,23 +188,23 @@ export class SyncRunPullApi {
 
   }
 
-   getRoomNodeFromLocationName( locationName : string) : SpinalNode<any> {
+  getRoomNodeFromLocationName(locationName: string): SpinalNode<any> {
     const roomNode = this.roomNodes.find((room) => {
       return room.getName().get().includes(locationName);
     });
-    if(!roomNode) {
+    if (!roomNode) {
       //console.warn(`Room node not found for location name: ${locationName}`);
       return null;
     }
     return roomNode;
   }
 
-  private getProcessNodeFromTicketName(ticketName : string) :SpinalNode<any> {
-    const processNode = [this.ticketProcessNodeProprete,this.ticketProcessNodePlomberie,this.ticketProcessNodeElectricite].find((node) => {
+  private getProcessNodeFromTicketName(ticketName: string): SpinalNode<any> {
+    const processNode = [this.ticketProcessNodeProprete, this.ticketProcessNodePlomberie, this.ticketProcessNodeElectricite].find((node) => {
       return node.getName().get() === this.mappingTicketNames.get(ticketName)?.processName
     });
 
-    if(!processNode) {
+    if (!processNode) {
       console.warn(`Process node not found for ticket name: ${ticketName}, defaulting to Proprete process node.`);
       return this.ticketProcessNodeProprete;
     }
@@ -213,7 +213,7 @@ export class SyncRunPullApi {
   }
 
   private getStepsFromTicketName(ticketName: string): SpinalNodeRef[] {
-    if(this.ticketNamesPlomberie.includes(ticketName)) {
+    if (this.ticketNamesPlomberie.includes(ticketName)) {
       return this.ticketPlomberieStepNodes;
     }
     else if (this.ticketNamesElectricite.includes(ticketName)) {
@@ -224,7 +224,7 @@ export class SyncRunPullApi {
       return this.ticketPropreteStepNodes;
     }
   }
-  
+
 
   private onCreateTicket = async (evt: WebhookEvent<TicketWebhookPayload>) => {
     if (this.seenDeliveries.has(evt.deliveryId)) return;
@@ -232,13 +232,13 @@ export class SyncRunPullApi {
     const ticketMerciYanis: ITicket = evt.payload.data as ITicket; // full ticket on creation
 
     try {
-      if(ticketMerciYanis.title.trim() === 'Comptage de passage') {
+      if (ticketMerciYanis.title.trim() === 'Comptage de passage') {
         console.log('Ignoring CREATE_TICKET for Comptage de passage');
         return;
       }
 
       const location_child = this.MYLocations.find(loc => loc._id === ticketMerciYanis.location);
-      if(!location_child){
+      if (!location_child) {
         console.error(`Location with id ${ticketMerciYanis.location} not found in MYLocations.`);
         return;
       }
@@ -254,20 +254,23 @@ export class SyncRunPullApi {
         MYNumber: ticketMerciYanis._number,
         date: moment(ticketMerciYanis._createdAt).format('YYYY-MM-DD HH:mm:ss'),
         location: parent_location.name,
-        declarer_id : 'MerciYanis'
+        declarer_id: 'MerciYanis'
       };
-      if(ticketMerciYanis.title.trim() === 'Comptage de passage'){
+
+      if (
+        ['Propreté', 'Consommables'].includes(ticketMerciYanis.title.trim())
+      ) {
         ticketInfo['gmaoId'] = -1;
       }
 
-      const roomNode =  this.getRoomNodeFromLocationName(ticketInfo.location);
-      if(!roomNode){
+      const roomNode = this.getRoomNodeFromLocationName(ticketInfo.location);
+      if (!roomNode) {
         return;
       }
 
 
 
-      const ticketNodeId  = await spinalServiceTicket.addTicket(
+      const ticketNodeId = await spinalServiceTicket.addTicket(
         ticketInfo,
         this.getProcessNodeFromTicketName(ticketMerciYanis.title.trim()).getId().get(),
         this.ticketContextNode.getId().get(),
@@ -289,7 +292,7 @@ export class SyncRunPullApi {
     this.seenDeliveries.add(evt.deliveryId);
     const payload: TicketWebhookPayload = evt.payload;
     const ticketMerciYanis: Partial<ITicket> = evt.payload.data; // only contains updated fields
-    
+
     try {
       console.log(
         'Handling UPDATE_TICKET from bus:',
@@ -310,7 +313,7 @@ export class SyncRunPullApi {
       if (!matchingNode) {
         throw new Error(`Ticket with MYId ${payload._ticket} not found.`);
       }
-      if(matchingNode.getName().get().includes('Comptage de passage')){
+      if (matchingNode.getName().get().includes('Comptage de passage')) {
         return;
       }
       SpinalGraphService._addNode(matchingNode);
@@ -356,7 +359,7 @@ export class SyncRunPullApi {
   checkTicketInfoObject(obj: { [key: string]: string }): boolean {
     return obj.hasOwnProperty('clientId') && obj.hasOwnProperty('stepId');
   }
-  
+
 
   /**
    * This function updates MerciYanis when the ticket in hub is more up-to-date than in MY.
@@ -373,19 +376,19 @@ export class SyncRunPullApi {
     // Check if client status is inferior to current step
     const currentStepIndex = this.allStepNames.indexOf(currentStep.name.get());
     const currentClientStepIndex = this.allClientStepNames.lastIndexOf(clientTicket.status);
-    if( currentClientStepIndex === -1){
+    if (currentClientStepIndex === -1) {
       console.error(`Unknown client ticket status: ${clientTicket.status} for ticket ID: ${clientTicket._id}`);
       return;
     }
 
-    if( currentClientStepIndex < currentStepIndex) {
+    if (currentClientStepIndex < currentStepIndex) {
       console.log(`Ticket (ID: ${clientTicket._id} | ${clientTicket._number}) 
         GMAO_ID : ${matchingNode.info.gmaoId?.get()} 
         SERVER_ID : ${matchingNode._serverId} 
         status in MerciYanis is behind the current step in Spinal 
         (${clientTicket.status} < ${currentStep.name.get()}). 
         Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
-      this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get(currentStep.name.get())});
+      this.apiClient.updateTicket(clientTicket._id, { status: this.mappingSteps.get(currentStep.name.get()) });
     }
     // if ( clientTicket.status === 'NEW' && currentStepIndex > 0) {
     //   console.log(`Ticket (ID: ${clientTicket._id} | ${clientTicket._number}) GMAO_ID : ${matchingNode.info.gmaoId?.get()} SERVER_ID : ${matchingNode._serverId} status in MerciYanis is behind the current step in Spinal (${clientTicket.status} < ${currentStep.name.get()}). Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
@@ -438,7 +441,7 @@ export class SyncRunPullApi {
         continue; // move to next ticket after handling the move
       }
 
-      if(updateOnly){
+      if (updateOnly) {
         continue;
       }
 
@@ -453,16 +456,16 @@ export class SyncRunPullApi {
         MYNumber: clientTicket._number,
         date: moment(clientTicket._createdAt).format('YYYY-MM-DD HH:mm:ss'),
         location: clientTicket.location.parent.name,
-        declarer_id : 'MerciYanis'
+        declarer_id: 'MerciYanis'
       };
 
-      if(clientTicket.title.trim() === 'Comptage de passage'){
+      if (['Propreté', 'Consommables'].includes(clientTicket.title.trim())) {
         ticketInfo['gmaoId'] = -1;
       }
-    
+
       try {
-        const roomNode =  this.getRoomNodeFromLocationName(ticketInfo.location);
-        if(!roomNode){
+        const roomNode = this.getRoomNodeFromLocationName(ticketInfo.location);
+        if (!roomNode) {
           continue;
         }
         const ticketNodeId = await spinalServiceTicket.addTicket(
@@ -472,18 +475,18 @@ export class SyncRunPullApi {
           roomNode.getId().get()
         );
         //console.log('Ticket created from fetch: ', ticketNodeId);
-        if(typeof ticketNodeId !== 'string') {
+        if (typeof ticketNodeId !== 'string') {
           throw new Error('The spinal ticket creation did not return a valid ticket node id');
         }
 
-        if(clientTicket.status != 'NEW') {
+        if (clientTicket.status != 'NEW') {
           await spinalServiceTicket.moveTicket(
             ticketNodeId,
             this.getStepsFromTicketName(clientTicket.title.trim())[0]?.id.get(),
             this.getStepsFromTicketName(clientTicket.title.trim()).find(step => step.name.get() === this.getSpinalStepFromClientStep(clientTicket.status))?.id.get(),
             this.ticketContextNode.getId().get()
           );
-      }
+        }
 
       } catch (e) {
         console.error('Error creating ticket from fetch:', e);
@@ -531,7 +534,7 @@ export class SyncRunPullApi {
       const locations = await this.apiClient.getLocations();
       this.MYLocations = locations.results;
       const tickets = await this.apiClient.getAllTickets();
-      const filteredTickets = tickets.filter( ticket => { // we only keep non 'Comptage de passage' tickets
+      const filteredTickets = tickets.filter(ticket => { // we only keep non 'Comptage de passage' tickets
         return ticket.title.trim() !== 'Comptage de passage';
       })
       // const tickets = (await this.apiClient.getTickets()).results;
@@ -558,12 +561,12 @@ export class SyncRunPullApi {
       try {
         console.log('Run...');
         const tickets = await this.apiClient.getAllTickets();
-        const filteredTickets = tickets.filter( ticket => { // we only keep non 'Comptage de passage' tickets
+        const filteredTickets = tickets.filter(ticket => { // we only keep non 'Comptage de passage' tickets
           return ticket.title.trim() !== 'Comptage de passage';
         })
         //const tickets = (await this.apiClient.getTickets()).results;
         console.log(`API tickets fetched: ${filteredTickets.length}`);
-        await this.syncFromFetch(filteredTickets,true);
+        await this.syncFromFetch(filteredTickets, true);
 
         console.log('... Run finished !');
         this.config.lastSync.set(Date.now());
