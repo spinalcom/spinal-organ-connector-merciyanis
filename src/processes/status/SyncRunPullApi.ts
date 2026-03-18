@@ -71,6 +71,7 @@ export class SyncRunPullApi {
   private seenDeliveries = new Set<string>(); // basic idempotency
   private mappingSteps = new Map<string, 'NEW' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED'>(); // map<stepName, clientStepName>
   private mappingTicketNames = new Map<string, { ticketName: string, processName: string }>();
+  private mappingMYTicketNameToMYCategoryId = new Map<string, string>(); // map<MY ticket name, MY category id>
   private allStepNames = ['Attente de lect.avant Execution', 'Attente de réalisation', 'Réalisation partielle', 'Clôturée', 'Refusée']
   private allClientStepNames = ['NEW', 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'COMPLETED']
   private ticketNamesProprete = ['Consommables', 'Propreté', 'Comptage de passage']
@@ -80,6 +81,8 @@ export class SyncRunPullApi {
   private roomNodes: SpinalNode<any>[] = [];
 
   private MYLocations: any[] = [];
+
+
 
 
 
@@ -101,6 +104,13 @@ export class SyncRunPullApi {
     this.mappingTicketNames.set('Comptage de passage', { ticketName: 'CNP-Comptage de passage', processName: process.env.TICKET_PROCESS_PROPRETE });
     this.mappingTicketNames.set("Fuite d'eau / Robinetterie", { ticketName: "CNP-Fuite d'eau", processName: process.env.TICKET_PROCESS_PLOMBERIE });
     this.mappingTicketNames.set('Eclairage', { ticketName: "CNP-Défaut d'éclairage", processName: process.env.TICKET_PROCESS_ELEC });
+
+    this.mappingMYTicketNameToMYCategoryId.set('Consommables', '019a0b26-e3b3-71fc-98b7-991a1228178c');
+    this.mappingMYTicketNameToMYCategoryId.set('Propreté', '019a0b27-0e95-708c-b91a-9a36f6855712');
+    this.mappingMYTicketNameToMYCategoryId.set('Comptage de passage', '019a0b27-0e95-708c-b91a-9a36f6855712');
+    this.mappingMYTicketNameToMYCategoryId.set("Fuite d'eau / Robinetterie", '019a0b27-6cdb-700b-a505-29b35a59aaf5');
+    this.mappingMYTicketNameToMYCategoryId.set('Eclairage', '019a0b27-a18f-7038-987f-3481e854da9e');
+
 
   }
 
@@ -406,6 +416,35 @@ export class SyncRunPullApi {
 
 
 
+  private async syncPush() {
+    const propreteTickets = await this.ticketProcessNodeProprete.findInContext(this.ticketContextNode, (node) => {
+      return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket');
+    });
+
+    const ticketsToPush = []
+
+    for (const ticket of propreteTickets) {
+      const attributes = await serviceDocumentation.getAttributesByCategory(ticket, 'default');
+      const MYId = attributes.find((attr) => attr.label.get() === 'MYId')
+
+
+
+
+
+
+      if (!MYId) {
+        ticketsToPush.push(ticket);
+      }
+    }
+
+
+
+
+
+
+
+
+  }
 
 
   /**
@@ -531,8 +570,7 @@ export class SyncRunPullApi {
       // bus.on("DELETE_TICKET", this.onDeleteTicket)
 
 
-      const locations = await this.apiClient.getLocations();
-      this.MYLocations = locations.results;
+      this.MYLocations = await this.apiClient.getAllLocations();
       const tickets = await this.apiClient.getAllTickets();
       const filteredTickets = tickets.filter(ticket => { // we only keep non 'Comptage de passage' tickets
         return ticket.title.trim() !== 'Comptage de passage';

@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import fs from 'fs';
 import path from 'path';
+import { ILocation } from '../../interfaces/api/ILocation';
 import { ILocationResponse } from '../../interfaces/api/ILocationResponse';
 import { ITicketResponse } from '../../interfaces/api/ITicketResponse';
 import { ITicket } from '../../interfaces/api/ITicket';
@@ -208,6 +209,47 @@ export class ClientApi {
     }
   }
 
+  // POST
+  async createTicket(data: {
+    title: string;
+    category: string;
+    location: string;
+    assignees?: string[];
+    followers?: string[];
+    externalFollowers?: string[];
+    status?: string;
+    description?: string;
+  }): Promise<{ _id: string }> {
+    await this.ensureTokenValid();
+    const body = {
+      title: data.title,
+      category: data.category,
+      location: data.location,
+      assignees: data.assignees ?? [],
+      followers: data.followers ?? [],
+      externalFollowers: data.externalFollowers ?? [],
+      status: data.status ?? 'NEW',
+      ...(data.description != null && { description: data.description }),
+    };
+    try {
+      console.log(`Creating ticket in MerciYanis ...`);
+      const r = await this.axios.post('/tickets', body);
+      console.log(`Ticket created: ${r.data._id}`);
+      return r.data;
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (status === 401) {
+        await this.refreshTokenFlow();
+        const r2 = await this.axios.post('/tickets', body);
+        console.log(`Ticket created: ${r2.data._id}`);
+        return r2.data;
+      }
+      const respBody = e?.response?.data;
+      throw new Error(`POST /tickets failed: ${status ?? 'no-status'} ${JSON.stringify(respBody ?? {})}`);
+    }
+  }
+
+
   async getTickets() {
     return this.getWithRetry<ITicketResponse>('/tickets?fields=title,description,_number,_createdAt,status,location.parent.name&limit=100&offset=300');
   }
@@ -216,15 +258,36 @@ export class ClientApi {
     return this.getWithRetry<ILocationResponse>('/locations?fields=*&limit=100');
   }
 
+  async getLocationsPage(limit = 100, offset = 0): Promise<ILocationResponse> {
+    const q = new URLSearchParams({ fields: '*', limit: String(limit), offset: String(offset) });
+    return this.getWithRetry<ILocationResponse>(`/locations?${q.toString()}`);
+  }
+
+  async getAllLocations(limit = 100): Promise<ILocation[]> {
+    const all: ILocation[] = [];
+    let offset = 0;
+    let total = Infinity;
+
+    while (offset < total) {
+      const page = await this.getLocationsPage(limit, offset);
+      if (typeof page.total === 'number') total = page.total;
+      const items = page.results ?? [];
+      if (items.length === 0) break;
+      all.push(...items);
+      offset += items.length;
+    }
+    return all;
+  }
+
   async getTicketsPage(limit = 100, offset = 0): Promise<ITicketResponse> {
     const q = new URLSearchParams({ fields: 'title,description,_number,_createdAt,status,location.parent.name', limit: String(limit), offset: String(offset) });
     return this.getWithRetry<ITicketResponse>(`/tickets?${q.toString()}`);
   }
 
-   /**
-   * Async iterator that yields tickets page by page (one ticket at a time).
-   * Good for streaming/processing without holding everything in memory.
-   */
+  /**
+  * Async iterator that yields tickets page by page (one ticket at a time).
+  * Good for streaming/processing without holding everything in memory.
+  */
   async *iterateTickets(limit = 100, {
     pauseMs = 0,            // small delay between calls (rate-limit friendly)
     maxPages = Infinity,    // safety guard
