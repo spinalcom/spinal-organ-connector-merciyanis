@@ -82,6 +82,8 @@ export class SyncRunPullApi {
 
   private MYLocations: any[] = [];
 
+  private currentlyPushingTickets = new Set<string>(); // guards against webhook race during syncPush
+
 
 
 
@@ -265,6 +267,13 @@ export class SyncRunPullApi {
     try {
       if (ticketMerciYanis.title.trim() === 'Comptage de passage') {
         console.log('Ignoring CREATE_TICKET for Comptage de passage');
+        return;
+      }
+
+      // Skip if this ticket is being pushed by syncPush (race condition guard)
+      const pushKey = `${ticketMerciYanis.title.trim()}|${ticketMerciYanis.location}`;
+      if (this.currentlyPushingTickets.has(pushKey)) {
+        console.log(`Ignoring CREATE_TICKET webhook for "${ticketMerciYanis.title}" — already being pushed by syncPush`);
         return;
       }
 
@@ -462,6 +471,9 @@ export class SyncRunPullApi {
       const MYId = ticket.info.MYId?.get();
       if (MYId) continue; // ticket is already in MY
 
+      const creationDate = ticket.info.creationDate?.get();
+      if (creationDate && creationDate < Date.now() - (7 * 24 * 60 * 60 * 1000)) continue;
+
       const stepId = ticket.info.stepId?.get();
       const stepNodeRef = this.ticketPropreteStepNodes.find((step) => {
         return step.id.get() === stepId;
@@ -510,26 +522,31 @@ export class SyncRunPullApi {
         description: ticket.info.description?.get() || ''
       };
 
+      const pushKey = `${myTicketName}|${locationId}`;
+      this.currentlyPushingTickets.add(pushKey);
       try {
-        const created = await this.apiClient.createTicket(ticketPayload);
-        console.log(`syncPush: Ticket created in MY (ID: ${created._id} | #${created._number}) for Spinal ticket: ${spinalTicketName}`);
-        // Store the same info as onCreateTicket / syncFromFetch
-        ticket.info.add_attr({
-          MYId: created._id,
-          MYNumber: created._number,
-          date: moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
-          location: locationName
-        });
-        await serviceDocumentation.createOrUpdateAttrsAndCategories(ticket, 'default',
-          {
-            'MYId': created._id,
-            'MYNumber': '' + created._number,
-            'date': moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
-            'location': locationName
-          }
-        )
+        console.log(`syncPush: Creating ticket in MY for Spinal ticket "${spinalTicketName}" with payload:`, ticketPayload);
+        // const created = await this.apiClient.createTicket(ticketPayload);
+        // console.log(`syncPush: Ticket created in MY (ID: ${created._id} | #${created._number}) for Spinal ticket: ${spinalTicketName}`);
+        // // Store the same info as onCreateTicket / syncFromFetch
+        // ticket.info.add_attr({
+        //   MYId: created._id,
+        //   MYNumber: created._number,
+        //   date: moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
+        //   location: locationName
+        // });
+        // await serviceDocumentation.createOrUpdateAttrsAndCategories(ticket, 'default',
+        //   {
+        //     'MYId': created._id,
+        //     'MYNumber': '' + created._number,
+        //     'date': moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
+        //     'location': locationName
+        //   }
+        // )
       } catch (e) {
         console.error(`syncPush: Failed to create ticket in MY for ${spinalTicketName}:`, e);
+      } finally {
+        this.currentlyPushingTickets.delete(pushKey);
       }
     }
   }
@@ -694,6 +711,8 @@ export class SyncRunPullApi {
         //const tickets = (await this.apiClient.getTickets()).results;
         console.log(`API tickets fetched: ${filteredTickets.length}`);
         await this.syncFromFetch(filteredTickets, true);
+
+        await this.syncPush();
 
         console.log('... Run finished !');
         this.config.lastSync.set(Date.now());
