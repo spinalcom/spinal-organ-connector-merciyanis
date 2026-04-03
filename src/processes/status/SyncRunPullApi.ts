@@ -42,7 +42,7 @@ import { bus, WebhookEvent } from '../../utils/bus';
 
 import { ClientApi } from '../../services/client/ClientAuth';
 
-import { spinalServiceTicket } from 'spinal-service-ticket';
+import { serviceTicketPersonalized, spinalServiceTicket } from 'spinal-service-ticket';
 import { ITicket } from '../../interfaces/api/ITicket';
 import { TicketWebhookPayload } from '../../interfaces/api/IWebhook';
 import { SpinalAttribute } from 'spinal-models-documentation';
@@ -113,6 +113,27 @@ export class SyncRunPullApi {
 
 
   }
+
+
+  async getNodeFromTicket(
+    ticketNode: SpinalNode
+  ): Promise<SpinalNode | undefined> {
+    const parentNodes = await ticketNode.getParents([
+      'SpinalSystemServiceTicketHasTicket',
+    ]);
+    for (const parent of parentNodes) {
+      if (
+        !['SpinalSystemServiceTicketTypeStep', 'analyticOutputs'].includes(
+          parent.info.type.get()
+        )
+      ) {
+        return parent;
+      }
+    }
+
+    return undefined;
+  }
+
 
   async getSpatialContext(): Promise<SpinalNode<any>> {
     const contexts = await this.graph.getChildren();
@@ -415,36 +436,104 @@ export class SyncRunPullApi {
   }
 
 
+  private getMyTicketNameFromSpinalName(spinalName: string): string | undefined {
+    const entries = Array.from(this.mappingTicketNames.entries());
+    for (const [myName, mapping] of entries) {
+      if (mapping.ticketName === spinalName) return myName;
+    }
+    return undefined;
+  }
+
+  private getMYLocationIdFromRoomName(locationName: string): string | undefined {
+    const parentLocation = this.MYLocations.find(loc => loc.name?.includes(locationName));
+    if (!parentLocation) return undefined;
+    return parentLocation._id;
+    // // We need a child location under this parent to match the MY ticket structure
+    // const childLocation = this.MYLocations.find(loc => loc.parent === parentLocation._id);
+    // return childLocation?._id || parentLocation._id;
+  }
 
   private async syncPush() {
     const propreteTickets = await this.ticketProcessNodeProprete.findInContext(this.ticketContextNode, (node) => {
       return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket');
     });
 
-    const ticketsToPush = []
-
     for (const ticket of propreteTickets) {
-      const attributes = await serviceDocumentation.getAttributesByCategory(ticket, 'default');
-      const MYId = attributes.find((attr) => attr.label.get() === 'MYId')
+      const MYId = ticket.info.MYId?.get();
+      if (MYId) continue; // ticket is already in MY
 
+      const stepId = ticket.info.stepId?.get();
+      const stepNodeRef = this.ticketPropreteStepNodes.find((step) => {
+        return step.id.get() === stepId;
+      });
+      const stepName = stepNodeRef?.name.get();
+      if (!stepName || ['Clôturée', 'Refusée'].includes(stepName)) continue;
 
+      const elementOfTicket = await this.getNodeFromTicket(ticket);
+      if (!elementOfTicket || elementOfTicket.info.type.get() !== 'geographicRoom') continue;
 
+      const locationName = elementOfTicket.getName().get().substring(0, 8);
 
+      // Reverse the CNP ticket name back to the MY ticket name
+      const spinalTicketName = ticket.info.name.get();
+      const myTicketName = this.getMyTicketNameFromSpinalName(spinalTicketName);
+      if (!myTicketName) {
+        console.warn(`syncPush: Could not find MY ticket name for Spinal name: ${spinalTicketName}`);
+        continue;
+      }
 
+      // Get category ID from the MY ticket name
+      const categoryId = this.mappingMYTicketNameToMYCategoryId.get(myTicketName);
+      if (!categoryId) {
+        console.warn(`syncPush: Could not find MY category for ticket name: ${myTicketName}`);
+        continue;
+      }
 
-      if (!MYId) {
-        ticketsToPush.push(ticket);
+      // Get the MY location ID from the room name
+      const locationId = this.getMYLocationIdFromRoomName(locationName);
+      if (!locationId) {
+        console.warn(`syncPush: Could not find MY location for room name: ${locationName}`);
+        continue;
+      }
+
+      // Convert the spinal step to MY status
+      const myStatus = this.mappingSteps.get(stepName) || 'NEW';
+
+      const ticketPayload = {
+        title: myTicketName,
+        category: categoryId,
+        location: locationId,
+        assignees: [],
+        followers: [],
+        externalFollowers: [],
+        status: myStatus,
+        description: ticket.info.description?.get() || ''
+      };
+
+      try {
+        const created = await this.apiClient.createTicket(ticketPayload);
+        console.log(`syncPush: Ticket created in MY (ID: ${created._id} | #${created._number}) for Spinal ticket: ${spinalTicketName}`);
+        // Store the same info as onCreateTicket / syncFromFetch
+        ticket.info.add_attr({
+          MYId: created._id,
+          MYNumber: created._number,
+          date: moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
+          location: locationName
+        });
+        await serviceDocumentation.createOrUpdateAttrsAndCategories(ticket, 'default',
+          {
+            'MYId': created._id,
+            'MYNumber': '' + created._number,
+            'date': moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
+            'location': locationName
+          }
+        )
+      } catch (e) {
+        console.error(`syncPush: Failed to create ticket in MY for ${spinalTicketName}:`, e);
       }
     }
-
-
-
-
-
-
-
-
   }
+
 
 
   /**

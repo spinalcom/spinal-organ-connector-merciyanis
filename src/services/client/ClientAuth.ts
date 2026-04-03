@@ -219,7 +219,7 @@ export class ClientApi {
     externalFollowers?: string[];
     status?: string;
     description?: string;
-  }): Promise<{ _id: string }> {
+  }): Promise<ITicket> {
     await this.ensureTokenValid();
     const body = {
       title: data.title,
@@ -233,14 +233,14 @@ export class ClientApi {
     };
     try {
       console.log(`Creating ticket in MerciYanis ...`);
-      const r = await this.axios.post('/tickets', body);
+      const r = await this.axios.post('/tickets?field=*', body);
       console.log(`Ticket created: ${r.data._id}`);
       return r.data;
     } catch (e: any) {
       const status = e?.response?.status;
       if (status === 401) {
         await this.refreshTokenFlow();
-        const r2 = await this.axios.post('/tickets', body);
+        const r2 = await this.axios.post('/tickets?field=*', body);
         console.log(`Ticket created: ${r2.data._id}`);
         return r2.data;
       }
