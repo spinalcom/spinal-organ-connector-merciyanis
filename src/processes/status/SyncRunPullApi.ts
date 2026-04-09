@@ -60,6 +60,7 @@ export class SyncRunPullApi {
   interval: number;
   running: boolean;
   private apiClient: ClientApi;
+  private spatialContextNode: SpinalNode<any>;
   private ticketContextNode: SpinalNode<any>;
   private ticketProcessNodeProprete: SpinalNode<any>;
   private ticketProcessNodePlomberie: SpinalNode<any>;
@@ -430,16 +431,6 @@ export class SyncRunPullApi {
         Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
       this.apiClient.updateTicket(clientTicket._id, { status: this.mappingSteps.get(currentStep.name.get()) });
     }
-    // if ( clientTicket.status === 'NEW' && currentStepIndex > 0) {
-    //   console.log(`Ticket (ID: ${clientTicket._id} | ${clientTicket._number}) GMAO_ID : ${matchingNode.info.gmaoId?.get()} SERVER_ID : ${matchingNode._serverId} status in MerciYanis is behind the current step in Spinal (${clientTicket.status} < ${currentStep.name.get()}). Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
-    //   this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get(currentStep.name.get())});
-    //   return;
-    // }
-    // if (clientTicket.status === 'IN_PROGRESS' && currentStepIndex > 2) {
-    //   console.log(`Ticket (ID: ${clientTicket._id} | ${clientTicket._number}) GMAO_ID : ${matchingNode.info.gmaoId?.get()} SERVER_ID : ${matchingNode._serverId} status in MerciYanis is behind the current step in Spinal (${clientTicket.status} < ${currentStep.name.get()}). Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
-    //   this.apiClient.updateTicket(clientTicket._id, {status: this.mappingSteps.get(currentStep.name.get())});
-    //   return;
-    // }
 
     return;
   }
@@ -471,8 +462,8 @@ export class SyncRunPullApi {
       const MYId = ticket.info.MYId?.get();
       if (MYId) continue; // ticket is already in MY
 
-      const creationDate = ticket.info.creationDate?.get();
-      if (creationDate && creationDate < Date.now() - (7 * 24 * 60 * 60 * 1000)) continue;
+      //const creationDate = ticket.info.creationDate?.get();
+      //if (creationDate && creationDate < Date.now() - (7 * 24 * 60 * 60 * 1000)) continue;
 
       const stepId = ticket.info.stepId?.get();
       const stepNodeRef = this.ticketPropreteStepNodes.find((step) => {
@@ -482,9 +473,45 @@ export class SyncRunPullApi {
       if (!stepName || ['Clôturée', 'Refusée'].includes(stepName)) continue;
 
       const elementOfTicket = await this.getNodeFromTicket(ticket);
-      if (!elementOfTicket || elementOfTicket.info.type.get() !== 'geographicRoom') continue;
+      // if ticket attached to room node we fetch the MY location from the room name
+      // if ticket attached to BIM object, we fetch the parent room then get the MY location from the room name.
 
-      const locationName = elementOfTicket.getName().get().substring(0, 8);
+      let locationName = undefined;
+      let libelle = undefined;
+      if (elementOfTicket && elementOfTicket.info.type.get() === 'geographicRoom') {
+        locationName = elementOfTicket.getName().get().substring(0, 8);
+        libelle = locationName;
+      }
+      if (elementOfTicket && elementOfTicket.info.type.get() === 'BIMObject') {
+        const attr = await serviceDocumentation.findOneAttributeInCategory(elementOfTicket, 'REFERENTIEL', 'libelle');
+        if (attr != -1) {
+          libelle = attr.value.get();
+        }
+
+        const parentNodes = await elementOfTicket.getParentsInContext(this.spatialContextNode, 'hasBimObject');
+        const roomNode = parentNodes.find((node) => {
+          return node.info.type.get() === 'geographicRoom';
+        });
+
+        if (roomNode) {
+          locationName = roomNode.getName().get().substring(0, 8);
+        }
+      }
+
+      if (!locationName || !libelle) {
+        console.warn(`syncPush: Could not determine location name for ticket ${ticket.getName().get()} (ID: ${ticket._server_id}))`);
+        continue;
+      }
+
+
+
+
+      // Get the MY location ID from the room name
+      const locationId = this.getMYLocationIdFromRoomName(locationName);
+      if (!locationId) {
+        console.warn(`syncPush: Could not find MY location for room name: ${locationName}`);
+        continue;
+      }
 
       // Reverse the CNP ticket name back to the MY ticket name
       const spinalTicketName = ticket.info.name.get();
@@ -501,12 +528,7 @@ export class SyncRunPullApi {
         continue;
       }
 
-      // Get the MY location ID from the room name
-      const locationId = this.getMYLocationIdFromRoomName(locationName);
-      if (!locationId) {
-        console.warn(`syncPush: Could not find MY location for room name: ${locationName}`);
-        continue;
-      }
+
 
       // Convert the spinal step to MY status
       const myStatus = this.mappingSteps.get(stepName) || 'NEW';
@@ -519,30 +541,29 @@ export class SyncRunPullApi {
         followers: [],
         externalFollowers: [],
         status: myStatus,
-        description: ticket.info.description?.get() || ''
+        description: `${ticket.info.declarer_id?.get() || 'unknown declarer'} / Localisation : ${libelle} \n ${ticket.info.description?.get()}` || ''
       };
 
       const pushKey = `${myTicketName}|${locationId}`;
       this.currentlyPushingTickets.add(pushKey);
       try {
         console.log(`syncPush: Creating ticket in MY for Spinal ticket "${spinalTicketName}" with payload:`, ticketPayload);
-        // const created = await this.apiClient.createTicket(ticketPayload);
-        // console.log(`syncPush: Ticket created in MY (ID: ${created._id} | #${created._number}) for Spinal ticket: ${spinalTicketName}`);
-        // // Store the same info as onCreateTicket / syncFromFetch
-        // ticket.info.add_attr({
-        //   MYId: created._id,
-        //   MYNumber: created._number,
-        //   date: moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
-        //   location: locationName
-        // });
-        // await serviceDocumentation.createOrUpdateAttrsAndCategories(ticket, 'default',
-        //   {
-        //     'MYId': created._id,
-        //     'MYNumber': '' + created._number,
-        //     'date': moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
-        //     'location': locationName
-        //   }
-        // )
+        const created = await this.apiClient.createTicket(ticketPayload);
+        console.log(`syncPush: Ticket created in MY (ID: ${created._id} | #${created._number}) for Spinal ticket: ${spinalTicketName}`);
+        ticket.info.add_attr({
+          MYId: created._id,
+          MYNumber: created._number,
+          date: moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
+          location: locationName
+        });
+        await serviceDocumentation.createOrUpdateAttrsAndCategories(ticket, 'default',
+          {
+            'MYId': created._id,
+            'MYNumber': '' + created._number,
+            'date': moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
+            'location': locationName
+          }
+        )
       } catch (e) {
         console.error(`syncPush: Failed to create ticket in MY for ${spinalTicketName}:`, e);
       } finally {
@@ -644,6 +665,7 @@ export class SyncRunPullApi {
     try {
       // Init useful nodes
       this.ticketContextNode = await this.getTicketContext();
+      this.spatialContextNode = await this.getSpatialContext();
       this.ticketProcessNodeProprete = await this.getTicketProcess(
         process.env.TICKET_PROCESS_PROPRETE
       );
@@ -673,6 +695,7 @@ export class SyncRunPullApi {
 
       bus.on('CREATE_TICKET', this.onCreateTicket);
       bus.on('UPDATE_TICKET', this.onUpdateTicket);
+
       // bus.on("DELETE_TICKET", this.onDeleteTicket)
 
 
@@ -681,12 +704,11 @@ export class SyncRunPullApi {
       const filteredTickets = tickets.filter(ticket => { // we only keep non 'Comptage de passage' tickets
         return ticket.title.trim() !== 'Comptage de passage';
       })
-      // const tickets = (await this.apiClient.getTickets()).results;
       console.log(`API tickets fetched: ${filteredTickets.length}`);
+
       await this.syncFromFetch(filteredTickets);
 
-      // const locations = await this.apiClient.getLocations();
-      // console.log(locations);
+      await this.syncPush();
       this.config.lastSync.set(Date.now());
       console.log('Init DONE !');
     } catch (e) {
@@ -708,7 +730,7 @@ export class SyncRunPullApi {
         const filteredTickets = tickets.filter(ticket => { // we only keep non 'Comptage de passage' tickets
           return ticket.title.trim() !== 'Comptage de passage';
         })
-        //const tickets = (await this.apiClient.getTickets()).results;
+
         console.log(`API tickets fetched: ${filteredTickets.length}`);
         await this.syncFromFetch(filteredTickets, true);
 
