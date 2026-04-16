@@ -72,7 +72,7 @@ export class SyncRunPullApi {
   private seenDeliveries = new Set<string>(); // basic idempotency
   private mappingSteps = new Map<string, 'NEW' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED'>(); // map<stepName, clientStepName>
   private mappingTicketNames = new Map<string, { ticketName: string, processName: string }>();
-  private mappingMYTicketNameToMYCategoryId = new Map<string, string>(); // map<MY ticket name, MY category id>
+  private mappingTicketNameToMYCategoryId = new Map<string, string>(); // map<MY ticket name, MY category id>
   private allStepNames = ['Attente de lect.avant Execution', 'Attente de réalisation', 'Réalisation partielle', 'Clôturée', 'Refusée']
   private allClientStepNames = ['NEW', 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'COMPLETED']
   private ticketNamesProprete = ['Consommables', 'Propreté', 'Comptage de passage']
@@ -107,12 +107,17 @@ export class SyncRunPullApi {
     this.mappingTicketNames.set('Comptage de passage', { ticketName: 'CNP-Comptage de passage', processName: process.env.TICKET_PROCESS_PROPRETE });
     this.mappingTicketNames.set("Fuite d'eau / Robinetterie", { ticketName: "CNP-Fuite d'eau", processName: process.env.TICKET_PROCESS_PLOMBERIE });
     this.mappingTicketNames.set('Eclairage', { ticketName: "CNP-Défaut d'éclairage", processName: process.env.TICKET_PROCESS_ELEC });
+    this.mappingTicketNames.set('Problème tablettes sanitaires', { ticketName: "CNP-Problème tablettes sanitaires", processName: process.env.TICKET_PROCESS_PROPRETE });
+    //  This should not really be used since these tickets will never be created from MY but rather from Spinal, but we put it here for consistency and in case we want to create them from MY in the future
+    this.mappingTicketNames.set('Poubelles - traitement des déchets', { ticketName: "CNP-Poubelles - traitement des déchets", processName: process.env.TICKET_PROCESS_PROPRETE });
 
-    this.mappingMYTicketNameToMYCategoryId.set('Consommables', '019a0b26-e3b3-71fc-98b7-991a1228178c');
-    this.mappingMYTicketNameToMYCategoryId.set('Propreté', '019a0b27-0e95-708c-b91a-9a36f6855712');
-    this.mappingMYTicketNameToMYCategoryId.set('Comptage de passage', '019a0b27-0e95-708c-b91a-9a36f6855712');
-    this.mappingMYTicketNameToMYCategoryId.set("Fuite d'eau / Robinetterie", '019a0b27-6cdb-700b-a505-29b35a59aaf5');
-    this.mappingMYTicketNameToMYCategoryId.set('Eclairage', '019a0b27-a18f-7038-987f-3481e854da9e');
+    this.mappingTicketNameToMYCategoryId.set('Consommables sanitaires', '019a0b26-e3b3-71fc-98b7-991a1228178c');
+    this.mappingTicketNameToMYCategoryId.set('Problème propreté', '019a0b27-0e95-708c-b91a-9a36f6855712');
+    // this.mappingTicketNameToMYCategoryId.set('Comptage de passage', '019a0b27-0e95-708c-b91a-9a36f6855712');
+    // this.mappingTicketNameToMYCategoryId.set("Fuite d'eau / Robinetterie", '019a0b27-6cdb-700b-a505-29b35a59aaf5');
+    // this.mappingTicketNameToMYCategoryId.set('Eclairage', '019a0b27-a18f-7038-987f-3481e854da9e');
+    this.mappingTicketNameToMYCategoryId.set('Poubelles - traitement des déchets', '019d956d-98b0-76c9-8f75-3d5d238fde54')
+
 
 
   }
@@ -515,14 +520,17 @@ export class SyncRunPullApi {
 
       // Reverse the CNP ticket name back to the MY ticket name
       const spinalTicketName = ticket.info.name.get();
-      const myTicketName = this.getMyTicketNameFromSpinalName(spinalTicketName);
+      if (!spinalTicketName.startsWith('CNP-')) continue; // only sync tickets that follow the CNP naming convention
+
+      const myTicketName = spinalTicketName.substring(4); // remove 'CNP-' prefix to get the MY ticket name to push
+
       if (!myTicketName) {
-        console.warn(`syncPush: Could not find MY ticket name for Spinal name: ${spinalTicketName}`);
+        console.warn(`syncPush: Could not find/process MY ticket name for Spinal name: ${spinalTicketName}`);
         continue;
       }
 
-      // Get category ID from the MY ticket name
-      const categoryId = this.mappingMYTicketNameToMYCategoryId.get(myTicketName);
+      // Get category ID from the ticket name
+      const categoryId = this.mappingTicketNameToMYCategoryId.get(myTicketName);
       if (!categoryId) {
         console.warn(`syncPush: Could not find MY category for ticket name: ${myTicketName}`);
         continue;
