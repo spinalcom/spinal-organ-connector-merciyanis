@@ -229,18 +229,18 @@ export class ClientApi {
       followers: data.followers ?? [],
       externalFollowers: data.externalFollowers ?? [],
       status: data.status ?? 'NEW',
-      ...(data.description != null && { description: data.description }),
+      description: data.description ?? '',
     };
     try {
       console.log(`Creating ticket in MerciYanis ...`);
-      const r = await this.axios.post('/tickets?field=*', body);
+      const r = await this.axios.post('/tickets?fields=*', body);
       console.log(`Ticket created: ${r.data._id}`);
       return r.data;
     } catch (e: any) {
       const status = e?.response?.status;
       if (status === 401) {
         await this.refreshTokenFlow();
-        const r2 = await this.axios.post('/tickets?field=*', body);
+        const r2 = await this.axios.post('/tickets?fields=*', body);
         console.log(`Ticket created: ${r2.data._id}`);
         return r2.data;
       }

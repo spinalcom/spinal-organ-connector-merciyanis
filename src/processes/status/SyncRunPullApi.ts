@@ -451,11 +451,11 @@ export class SyncRunPullApi {
 
   private getMYLocationIdFromRoomName(locationName: string): string | undefined {
     const parentLocation = this.MYLocations.find(loc => loc.name?.includes(locationName));
-    if (!parentLocation) return undefined;
-    return parentLocation._id;
+    // if (!parentLocation) return undefined;
+    // return parentLocation._id;
     // // We need a child location under this parent to match the MY ticket structure
-    // const childLocation = this.MYLocations.find(loc => loc.parent === parentLocation._id);
-    // return childLocation?._id || parentLocation._id;
+    const childLocation = this.MYLocations.find(loc => loc.parent === parentLocation._id);
+    return childLocation?._id || parentLocation?._id || undefined;
   }
 
   private async syncPush() {
