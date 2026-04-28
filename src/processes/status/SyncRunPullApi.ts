@@ -538,8 +538,8 @@ export class SyncRunPullApi {
 
 
 
-      // Convert the spinal step to MY status
-      const myStatus = this.mappingSteps.get(stepName) || 'NEW';
+      // MY only allows ticket creation with status 'NEW' — we update to the target status right after
+      const targetStatus = this.mappingSteps.get(stepName) || 'NEW';
 
       const ticketPayload = {
         title: myTicketName,
@@ -548,7 +548,7 @@ export class SyncRunPullApi {
         assignees: [],
         followers: [],
         externalFollowers: [],
-        status: myStatus,
+        status: 'NEW',
         description: `${ticket.info.declarer_id?.get() || 'unknown declarer'} / Localisation : ${libelle} \n ${ticket.info.description?.get()}` || ''
       };
 
@@ -572,6 +572,16 @@ export class SyncRunPullApi {
             'location': locationName
           }
         )
+
+        // If the Spinal ticket is already past 'NEW', update the MY ticket to the correct status
+        if (targetStatus !== 'NEW') {
+          try {
+            await this.apiClient.updateTicket(created._id, { status: targetStatus });
+            console.log(`syncPush: Updated MY ticket ${created._id} to status ${targetStatus}`);
+          } catch (e) {
+            console.error(`syncPush: Failed to update status on MY ticket ${created._id}:`, e);
+          }
+        }
       } catch (e) {
         console.error(`syncPush: Failed to create ticket in MY for ${spinalTicketName}:`, e);
       } finally {
@@ -727,7 +737,7 @@ export class SyncRunPullApi {
   async run(): Promise<void> {
     console.log('Starting run...');
     this.running = true;
-    const timeout = parseInt(process.env.PULL_INTERVAL);
+    const timeout = parseInt(process.env.PULL_INTERVAL!);
     await this.waitFct(timeout);
     while (true) {
       if (!this.running) break;
@@ -751,7 +761,7 @@ export class SyncRunPullApi {
         await this.waitFct(1000 * 60);
       } finally {
         const delta = Date.now() - before;
-        const timeout = parseInt(process.env.PULL_INTERVAL) - delta;
+        const timeout = parseInt(process.env.PULL_INTERVAL!) - delta;
         await this.waitFct(timeout);
       }
     }
