@@ -24,29 +24,23 @@
 
 import moment = require('moment');
 import {
-  SpinalContext,
   SpinalGraph,
   SpinalGraphService,
   SpinalNode,
   SpinalNodeRef,
-  SPINAL_RELATION_PTR_LST_TYPE,
 } from 'spinal-env-viewer-graph-service';
 
 import type OrganConfigModel from '../../model/OrganConfigModel';
 
-import serviceDocumentation, {
-  attributeService,
-} from 'spinal-env-viewer-plugin-documentation-service';
+import serviceDocumentation from 'spinal-env-viewer-plugin-documentation-service';
 
 import { bus, WebhookEvent } from '../../utils/bus';
 
 import { ClientApi } from '../../services/client/ClientAuth';
 
-import { serviceTicketPersonalized, spinalServiceTicket } from 'spinal-service-ticket';
+import { spinalServiceTicket, getTicketInfo, updateTicketAttributes } from 'spinal-service-ticket';
 import { ITicket } from '../../interfaces/api/ITicket';
 import { TicketWebhookPayload } from '../../interfaces/api/IWebhook';
-import { SpinalAttribute } from 'spinal-models-documentation';
-import { ILocation } from '../../interfaces/api/ILocation';
 
 /**
  * Main purpose of this class is to pull data from client.
@@ -57,17 +51,17 @@ import { ILocation } from '../../interfaces/api/ILocation';
 export class SyncRunPullApi {
   graph: SpinalGraph<any>;
   config: OrganConfigModel;
-  interval: number;
+  interval!: number;
   running: boolean;
   private apiClient: ClientApi;
-  private spatialContextNode: SpinalNode<any>;
-  private ticketContextNode: SpinalNode<any>;
-  private ticketProcessNodeProprete: SpinalNode<any>;
-  private ticketProcessNodePlomberie: SpinalNode<any>;
-  private ticketProcessNodeElectricite: SpinalNode<any>;
-  private ticketPropreteStepNodes: SpinalNodeRef[];
-  private ticketPlomberieStepNodes: SpinalNodeRef[];
-  private ticketElectriciteStepNodes: SpinalNodeRef[];
+  private spatialContextNode!: SpinalNode<any>;
+  private ticketContextNode!: SpinalNode<any>;
+  private ticketProcessNodeProprete!: SpinalNode<any>;
+  private ticketProcessNodePlomberie!: SpinalNode<any>;
+  private ticketProcessNodeElectricite!: SpinalNode<any>;
+  private ticketPropreteStepNodes!: SpinalNodeRef[];
+  private ticketPlomberieStepNodes!: SpinalNodeRef[];
+  private ticketElectriciteStepNodes!: SpinalNodeRef[];
 
   private seenDeliveries = new Set<string>(); // basic idempotency
   private mappingSteps = new Map<string, 'NEW' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED'>(); // map<stepName, clientStepName>
@@ -75,7 +69,6 @@ export class SyncRunPullApi {
   private mappingTicketNameToMYCategoryId = new Map<string, string>(); // map<MY ticket name, MY category id>
   private allStepNames = ['Attente de lect.avant Execution', 'Attente de réalisation', 'Réalisation partielle', 'Clôturée', 'Refusée']
   private allClientStepNames = ['NEW', 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'COMPLETED']
-  private ticketNamesProprete = ['Consommables', 'Propreté', 'Comptage de passage']
   private ticketNamesPlomberie = ["Fuite d'eau / Robinetterie"]
   private ticketNamesElectricite = ["Eclairage"]
 
@@ -102,14 +95,14 @@ export class SyncRunPullApi {
     this.mappingSteps.set('Clôturée', 'COMPLETED');
     this.mappingSteps.set('Refusée', 'COMPLETED');
 
-    this.mappingTicketNames.set('Consommables', { ticketName: 'CNP-Consommable sanitaires', processName: process.env.TICKET_PROCESS_PROPRETE });
-    this.mappingTicketNames.set('Propreté', { ticketName: 'CNP-Problème propreté', processName: process.env.TICKET_PROCESS_PROPRETE });
-    this.mappingTicketNames.set('Comptage de passage', { ticketName: 'CNP-Comptage de passage', processName: process.env.TICKET_PROCESS_PROPRETE });
-    this.mappingTicketNames.set("Fuite d'eau / Robinetterie", { ticketName: "CNP-Fuite d'eau", processName: process.env.TICKET_PROCESS_PLOMBERIE });
-    this.mappingTicketNames.set('Eclairage', { ticketName: "CNP-Défaut d'éclairage", processName: process.env.TICKET_PROCESS_ELEC });
-    this.mappingTicketNames.set('Problème tablettes sanitaires', { ticketName: "CNP-Problème tablettes sanitaires", processName: process.env.TICKET_PROCESS_PROPRETE });
+    this.mappingTicketNames.set('Consommables', { ticketName: 'CNP-Consommable sanitaires', processName: process.env.TICKET_PROCESS_PROPRETE! });
+    this.mappingTicketNames.set('Propreté', { ticketName: 'CNP-Problème propreté', processName: process.env.TICKET_PROCESS_PROPRETE! });
+    this.mappingTicketNames.set('Comptage de passage', { ticketName: 'CNP-Comptage de passage', processName: process.env.TICKET_PROCESS_PROPRETE! });
+    this.mappingTicketNames.set("Fuite d'eau / Robinetterie", { ticketName: "CNP-Fuite d'eau", processName: process.env.TICKET_PROCESS_PLOMBERIE! });
+    this.mappingTicketNames.set('Eclairage', { ticketName: "CNP-Défaut d'éclairage", processName: process.env.TICKET_PROCESS_ELEC! });
+    this.mappingTicketNames.set('Problème tablettes sanitaires', { ticketName: "CNP-Problème tablettes sanitaires", processName: process.env.TICKET_PROCESS_PROPRETE! });
     //  This should not really be used since these tickets will never be created from MY but rather from Spinal, but we put it here for consistency and in case we want to create them from MY in the future
-    this.mappingTicketNames.set('Poubelles - traitement des déchets', { ticketName: "CNP-Poubelles - traitement des déchets", processName: process.env.TICKET_PROCESS_PROPRETE });
+    this.mappingTicketNames.set('Poubelles - traitement des déchets', { ticketName: "CNP-Poubelles - traitement des déchets", processName: process.env.TICKET_PROCESS_PROPRETE! });
 
     this.mappingTicketNameToMYCategoryId.set('Consommables sanitaires', '019a0b26-e3b3-71fc-98b7-991a1228178c');
     this.mappingTicketNameToMYCategoryId.set('Problème propreté', '019a0b27-0e95-708c-b91a-9a36f6855712');
@@ -178,7 +171,7 @@ export class SyncRunPullApi {
     throw new Error('Ticket Context Not found');
   }
 
-  async getTicketProcess(processName): Promise<SpinalNode<any>> {
+  async getTicketProcess(processName: string): Promise<SpinalNode<any>> {
     const context = await this.getTicketContext();
     const processes = await context.getChildren(
       'SpinalSystemServiceTicketHasProcess'
@@ -227,7 +220,7 @@ export class SyncRunPullApi {
 
   }
 
-  getRoomNodeFromLocationName(locationName: string): SpinalNode<any> {
+  getRoomNodeFromLocationName(locationName: string): SpinalNode<any> | null {
     const roomNode = this.roomNodes.find((room) => {
       return room.getName().get().includes(locationName);
     });
@@ -261,6 +254,24 @@ export class SyncRunPullApi {
     // default
     else {
       return this.ticketPropreteStepNodes;
+    }
+  }
+
+  /**
+   * gmaoId is the one ticket field intentionally kept on node.info (not migrated to attributes),
+   * because it is read synchronously (e.g. the `=== -1` discard test). addTicket only stores fields
+   * in attributes, so we write gmaoId to node.info ourselves after the ticket node is created.
+   */
+  private setGmaoIdOnNodeInfo(ticketNodeId: string, gmaoId: number): void {
+    const ticketNode = SpinalGraphService.getRealNode(ticketNodeId);
+    if (!ticketNode) {
+      console.warn(`setGmaoIdOnNodeInfo: ticket node not found for id ${ticketNodeId}`);
+      return;
+    }
+    if (ticketNode.info.gmaoId === undefined) {
+      ticketNode.info.add_attr({ gmaoId });
+    } else {
+      ticketNode.info.gmaoId.set(gmaoId);
     }
   }
 
@@ -303,18 +314,13 @@ export class SyncRunPullApi {
         declarer_id: 'MerciYanis'
       };
 
-      if (
-        ['Propreté', 'Consommables'].includes(ticketMerciYanis.title.trim())
-      ) {
-        ticketInfo['gmaoId'] = -1;
-      }
+      // gmaoId stays on node.info (the one field not in attributes); we write it after creation.
+      const needsGmaoId = ['Propreté', 'Consommables'].includes(ticketMerciYanis.title.trim());
 
       const roomNode = this.getRoomNodeFromLocationName(ticketInfo.location);
       if (!roomNode) {
         return;
       }
-
-
 
       const ticketNodeId = await spinalServiceTicket.addTicket(
         ticketInfo,
@@ -322,6 +328,9 @@ export class SyncRunPullApi {
         this.ticketContextNode.getId().get(),
         roomNode.getId().get()
       );
+      if (needsGmaoId && typeof ticketNodeId === 'string') {
+        this.setGmaoIdOnNodeInfo(ticketNodeId, -1);
+      }
       console.log('Ticket created:', ticketNodeId);
     } catch (e) {
       console.error('CREATE_TICKET handler failed:', e);
@@ -353,10 +362,18 @@ export class SyncRunPullApi {
         return;
       }
       const allTicketNodes = await this.ticketProcessNodeProprete.findInContextByType(this.ticketContextNode, 'SpinalSystemServiceTicketTypeTicket');
-      const matchingNode = allTicketNodes.find((ticketNode) => {
-        return ticketNode.info.MYId?.get() === payload._ticket;
-      });
-      if (!matchingNode) {
+      // Ticket data now lives in attributes (category 'default'), not node.info, so we read each node's attributes to match by MYId.
+      let matchingNode: SpinalNode<any> | undefined;
+      let matchingInfo: Record<string, string> | undefined;
+      for (const ticketNode of allTicketNodes) {
+        const info = await getTicketInfo(ticketNode, ['MYId', 'stepId']);
+        if (info.MYId === payload._ticket) {
+          matchingNode = ticketNode;
+          matchingInfo = info;
+          break;
+        }
+      }
+      if (!matchingNode || !matchingInfo) {
         throw new Error(`Ticket with MYId ${payload._ticket} not found.`);
       }
       if (matchingNode.getName().get().includes('Comptage de passage')) {
@@ -364,7 +381,7 @@ export class SyncRunPullApi {
       }
       SpinalGraphService._addNode(matchingNode);
 
-      const currentStepId = matchingNode.info.stepId.get();
+      const currentStepId = matchingInfo.stepId;
       if (!currentStepId) {
         throw new Error(`Step information not found for ticket with MYId ${payload._ticket}.`);
       }
@@ -372,9 +389,17 @@ export class SyncRunPullApi {
         return step.id.get() === currentStepId;
       });
 
+      if (!currentStep) {
+        throw new Error(`Current step node not found for ticket with MYId ${payload._ticket}.`);
+      }
+
       const targetStep = this.ticketPropreteStepNodes.find((step) => {
         return step.name.get() === this.getSpinalStepFromClientStep(ticketStatus);
       });
+
+      if (!targetStep) {
+        throw new Error(`Target step node not found for ticket with MYId ${payload._ticket} and status ${ticketStatus}.`);
+      }
 
       await spinalServiceTicket.moveTicket(
         matchingNode.getId().get(),
@@ -395,7 +420,7 @@ export class SyncRunPullApi {
     }
   };
 
-  private getSpinalStepFromClientStep(clientStepName: string): string {
+  private getSpinalStepFromClientStep(clientStepName: string): string | undefined {
     for (const [spinalStep, clientStep] of this.mappingSteps.entries()) {
       if (clientStep === clientStepName) return spinalStep;
     }
@@ -413,11 +438,16 @@ export class SyncRunPullApi {
    * MY status for this ticket
    */
   private async updateMerciYanisTicketToCorrectStep(clientTicket: ITicket, matchingNode: SpinalNode<any>) {
-    const stepId = matchingNode.info.stepId.get();
+    const ticketInfo = await getTicketInfo(matchingNode, ['stepId']);
+    const stepId = ticketInfo.stepId;
 
     const currentStep = this.getStepsFromTicketName(clientTicket.title).find((step) => {
       return step.id.get() === stepId;
     });
+
+    if (!currentStep) {
+      throw new Error(` [updateMerciYanisTicketToCorrectStep] Current step node not found for ticket with MYId ${clientTicket._id}.`);
+    }
 
     // Check if client status is inferior to current step
     const currentStepIndex = this.allStepNames.indexOf(currentStep.name.get());
@@ -429,7 +459,7 @@ export class SyncRunPullApi {
 
     if (currentClientStepIndex < currentStepIndex) {
       console.log(`Ticket (ID: ${clientTicket._id} | ${clientTicket._number}) 
-        GMAO_ID : ${matchingNode.info.gmaoId?.get()} 
+        GMAO_ID : ${matchingNode.info.gmaoId?.get()}
         SERVER_ID : ${matchingNode._serverId} 
         status in MerciYanis is behind the current step in Spinal 
         (${clientTicket.status} < ${currentStep.name.get()}). 
@@ -440,13 +470,48 @@ export class SyncRunPullApi {
     return;
   }
 
+  /**
+   * Syncs a Spinal ticket's step to match MerciYanis, used when MerciYanis is the source of truth
+   * (propreté tickets). Acts as a catch-up for UPDATE_TICKET webhooks missed while the program was down.
+   * Only moves the ticket FORWARD: if MerciYanis appears behind Spinal's current step, Spinal is left untouched.
+   */
+  private async updateSpinalTicketToCorrectStep(clientTicket: ITicket, matchingNode: SpinalNode<any>) {
+    const info = await getTicketInfo(matchingNode, ['stepId']);
+    const stepId = info.stepId;
 
-  private getMyTicketNameFromSpinalName(spinalName: string): string | undefined {
-    const entries = Array.from(this.mappingTicketNames.entries());
-    for (const [myName, mapping] of entries) {
-      if (mapping.ticketName === spinalName) return myName;
+    const steps = this.ticketPropreteStepNodes;
+    const currentStep = steps.find((step) => step.id.get() === stepId);
+    if (!currentStep) {
+      console.warn(`[updateSpinalTicketToCorrectStep] Current step node not found for ticket with MYId ${clientTicket._id}.`);
+      return;
     }
-    return undefined;
+
+    const targetStepName = this.getSpinalStepFromClientStep(clientTicket.status);
+    if (!targetStepName) {
+      console.error(`[updateSpinalTicketToCorrectStep] Unknown client ticket status: ${clientTicket.status} for ticket ID: ${clientTicket._id}`);
+      return;
+    }
+    const targetStep = steps.find((step) => step.name.get() === targetStepName);
+    if (!targetStep) {
+      console.warn(`[updateSpinalTicketToCorrectStep] Target step "${targetStepName}" not found for ticket with MYId ${clientTicket._id}.`);
+      return;
+    }
+
+    // Only move forward: skip if the MerciYanis status maps to the same or an earlier step than the current one.
+    const currentStepIndex = this.allStepNames.indexOf(currentStep.name.get());
+    const targetStepIndex = this.allStepNames.indexOf(targetStepName);
+    if (targetStepIndex <= currentStepIndex) {
+      return;
+    }
+
+    await spinalServiceTicket.moveTicket(
+      matchingNode.getId().get(),
+      currentStep.id.get(),
+      targetStep.id.get(),
+      this.ticketContextNode.getId().get()
+    );
+
+    console.log(`[updateSpinalTicketToCorrectStep] Moved Spinal ticket (MYId: ${clientTicket._id} | ${clientTicket._number}) from "${currentStep.name.get()}" to "${targetStep.name.get()}" to match MerciYanis status ${clientTicket.status}`);
   }
 
   private getMYLocationIdFromRoomName(locationName: string): string | undefined {
@@ -464,13 +529,15 @@ export class SyncRunPullApi {
     });
 
     for (const ticket of propreteTickets) {
-      const MYId = ticket.info.MYId?.get();
+      // Ticket data now lives in attributes (category 'default'), not node.info.
+      const ticketAttrs = await getTicketInfo(ticket, ['MYId', 'stepId', 'declarer_id', 'description']);
+      const MYId = ticketAttrs.MYId;
       if (MYId) continue; // ticket is already in MY
 
       //const creationDate = ticket.info.creationDate?.get();
       //if (creationDate && creationDate < Date.now() - (7 * 24 * 60 * 60 * 1000)) continue;
 
-      const stepId = ticket.info.stepId?.get();
+      const stepId = ticketAttrs.stepId;
       const stepNodeRef = this.ticketPropreteStepNodes.find((step) => {
         return step.id.get() === stepId;
       });
@@ -549,7 +616,7 @@ export class SyncRunPullApi {
         followers: [],
         externalFollowers: [],
         status: 'NEW',
-        description: `${ticket.info.declarer_id?.get() || 'unknown declarer'} / Localisation : ${libelle} \n ${ticket.info.description?.get()}` || ''
+        description: `${ticketAttrs.declarer_id || 'unknown declarer'} / Localisation : ${libelle} \n ${ticketAttrs.description}` || ''
       };
 
       const pushKey = `${myTicketName}|${locationId}`;
@@ -558,20 +625,13 @@ export class SyncRunPullApi {
         console.log(`syncPush: Creating ticket in MY for Spinal ticket "${spinalTicketName}" with payload:`, ticketPayload);
         const created = await this.apiClient.createTicket(ticketPayload);
         console.log(`syncPush: Ticket created in MY (ID: ${created._id} | #${created._number}) for Spinal ticket: ${spinalTicketName}`);
-        ticket.info.add_attr({
+        // Ticket data is stored in attributes (category 'default') via the service helper.
+        await updateTicketAttributes(ticket, {
           MYId: created._id,
           MYNumber: created._number,
           date: moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
           location: locationName
         });
-        await serviceDocumentation.createOrUpdateAttrsAndCategories(ticket, 'default',
-          {
-            'MYId': created._id,
-            'MYNumber': '' + created._number,
-            'date': moment(created._createdAt).format('YYYY-MM-DD HH:mm:ss'),
-            'location': locationName
-          }
-        )
 
         // If the Spinal ticket is already past 'NEW', update the MY ticket to the correct status
         if (targetStatus !== 'NEW') {
@@ -601,28 +661,47 @@ export class SyncRunPullApi {
    */
   private async syncFromFetch(tickets: ITicket[], updateOnly = false) {
     const propreteTickets = await this.ticketProcessNodeProprete.findInContext(this.ticketContextNode, (node) => {
-      return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket' && node.info.MYId?.get() != undefined);
+      return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket');
     });
 
     const plomberieTickets = await this.ticketProcessNodePlomberie.findInContext(this.ticketContextNode, (node) => {
-      return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket' && node.info.MYId?.get() != undefined);
+      return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket');
     });
 
     const electriciteTickets = await this.ticketProcessNodeElectricite.findInContext(this.ticketContextNode, (node) => {
-      return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket' && node.info.MYId?.get() != undefined);
+      return (node.getType().get() === 'SpinalSystemServiceTicketTypeTicket');
     });
 
 
-    const allTicketNodes = [...propreteTickets, ...plomberieTickets, ...electriciteTickets];
+    // MYId now lives in attributes (category 'default') and can't be read from the synchronous
+    // findInContext predicate, so we read it per node here and keep only tickets already synced to MerciYanis.
+    // We also tag each node with its category, since the sync direction depends on who owns the ticket:
+    //  - 'proprete' tickets are handled in MerciYanis  -> MY is the source of truth (sync MY -> Spinal)
+    //  - 'gmao' tickets (plomberie/électricité) are handled in the GMAO mission via Spinal -> Spinal is the source of truth (sync Spinal -> MY)
+    const syncedTicketNodes: { node: SpinalNode<any>, MYId: string, category: 'proprete' | 'gmao' }[] = [];
+    for (const node of propreteTickets) {
+      const info = await getTicketInfo(node, ['MYId']);
+      if (info.MYId != undefined) {
+        syncedTicketNodes.push({ node, MYId: info.MYId, category: 'proprete' });
+      }
+    }
+    for (const node of [...plomberieTickets, ...electriciteTickets]) {
+      const info = await getTicketInfo(node, ['MYId']);
+      if (info.MYId != undefined) {
+        syncedTicketNodes.push({ node, MYId: info.MYId, category: 'gmao' });
+      }
+    }
 
     for (const clientTicket of tickets) {
-      const matchingNode = allTicketNodes.find((ticketNode) => {
-        return ticketNode.info.MYId?.get() === clientTicket._id;
-      })
-      if (matchingNode) {
+      const match = syncedTicketNodes.find((t) => t.MYId === clientTicket._id);
+      if (match) {
         // console.log(`Ticket ${clientTicket.title} (ID: ${clientTicket._id}) already exists. Checking for updates...`);
-        await this.updateMerciYanisTicketToCorrectStep(clientTicket, matchingNode);
-        continue; // move to next ticket after handling the move
+        if (match.category === 'proprete') {
+          await this.updateSpinalTicketToCorrectStep(clientTicket, match.node);
+        } else {
+          await this.updateMerciYanisTicketToCorrectStep(clientTicket, match.node);
+        }
+        continue; // move to next ticket after handling the update
       }
 
       if (updateOnly) {
@@ -639,16 +718,15 @@ export class SyncRunPullApi {
         MYId: clientTicket._id,
         MYNumber: clientTicket._number,
         date: moment(clientTicket._createdAt).format('YYYY-MM-DD HH:mm:ss'),
-        location: clientTicket.location.parent.name,
+        location: clientTicket.location?.parent?.name,
         declarer_id: 'MerciYanis'
       };
 
-      if (['Propreté', 'Consommables'].includes(clientTicket.title.trim())) {
-        ticketInfo['gmaoId'] = -1;
-      }
+      // gmaoId stays on node.info (the one field not in attributes); we write it after creation.
+      const needsGmaoId = ['Propreté', 'Consommables'].includes(clientTicket.title.trim());
 
       try {
-        const roomNode = this.getRoomNodeFromLocationName(ticketInfo.location);
+        const roomNode = this.getRoomNodeFromLocationName(ticketInfo.location!);
         if (!roomNode) {
           continue;
         }
@@ -661,6 +739,9 @@ export class SyncRunPullApi {
         //console.log('Ticket created from fetch: ', ticketNodeId);
         if (typeof ticketNodeId !== 'string') {
           throw new Error('The spinal ticket creation did not return a valid ticket node id');
+        }
+        if (needsGmaoId) {
+          this.setGmaoIdOnNodeInfo(ticketNodeId, -1);
         }
 
         if (clientTicket.status != 'NEW') {
@@ -685,14 +766,14 @@ export class SyncRunPullApi {
       this.ticketContextNode = await this.getTicketContext();
       this.spatialContextNode = await this.getSpatialContext();
       this.ticketProcessNodeProprete = await this.getTicketProcess(
-        process.env.TICKET_PROCESS_PROPRETE
+        process.env.TICKET_PROCESS_PROPRETE!
       );
       this.ticketProcessNodePlomberie = await this.getTicketProcess(
-        process.env.TICKET_PROCESS_PLOMBERIE
+        process.env.TICKET_PROCESS_PLOMBERIE!
       );
 
       this.ticketProcessNodeElectricite = await this.getTicketProcess(
-        process.env.TICKET_PROCESS_ELEC
+        process.env.TICKET_PROCESS_ELEC!
       );
 
       this.ticketPropreteStepNodes = await spinalServiceTicket.getStepsFromProcess(
