@@ -78,6 +78,10 @@ export class SyncRunPullApi {
 
   private currentlyPushingTickets = new Set<string>(); // guards against webhook race during syncPush
 
+  // DEBUG_MODE=1 turns the connector into a dry-run: every write (Spinal graph + MerciYanis API)
+  // is replaced by a clear `[DEBUG_MODE]` log of what would happen. Nothing is actually modified.
+  private debugMode = process.env.DEBUG_MODE === '1';
+
 
 
 
@@ -263,6 +267,10 @@ export class SyncRunPullApi {
    * in attributes, so we write gmaoId to node.info ourselves after the ticket node is created.
    */
   private setGmaoIdOnNodeInfo(ticketNodeId: string, gmaoId: number): void {
+    if (this.debugMode) {
+      console.log(`[DEBUG_MODE] Would set gmaoId=${gmaoId} on node.info of ticket ${ticketNodeId}`);
+      return;
+    }
     const ticketNode = SpinalGraphService.getRealNode(ticketNodeId);
     if (!ticketNode) {
       console.warn(`setGmaoIdOnNodeInfo: ticket node not found for id ${ticketNodeId}`);
@@ -319,6 +327,11 @@ export class SyncRunPullApi {
 
       const roomNode = this.getRoomNodeFromLocationName(ticketInfo.location);
       if (!roomNode) {
+        return;
+      }
+
+      if (this.debugMode) {
+        console.log(`[DEBUG_MODE] onCreateTicket: Would create Spinal ticket "${ticketInfo.name}" in process "${this.getProcessNodeFromTicketName(ticketMerciYanis.title.trim()).getName().get()}" at room "${roomNode.getName().get()}"${needsGmaoId ? ' (+ gmaoId=-1 on node.info)' : ''}`, ticketInfo);
         return;
       }
 
@@ -401,6 +414,11 @@ export class SyncRunPullApi {
         throw new Error(`Target step node not found for ticket with MYId ${payload._ticket} and status ${ticketStatus}.`);
       }
 
+      if (this.debugMode) {
+        console.log(`[DEBUG_MODE] onUpdateTicket: Would move Spinal ticket ${payload._ticket} from "${currentStep.name.get()}" to "${targetStep.name.get()}" (MerciYanis status: ${ticketStatus})`);
+        return;
+      }
+
       await spinalServiceTicket.moveTicket(
         matchingNode.getId().get(),
         currentStep.id.get(),
@@ -464,7 +482,11 @@ export class SyncRunPullApi {
         status in MerciYanis is behind the current step in Spinal 
         (${clientTicket.status} < ${currentStep.name.get()}). 
         Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
-      this.apiClient.updateTicket(clientTicket._id, { status: this.mappingSteps.get(currentStep.name.get()) });
+      if (this.debugMode) {
+        console.log(`[DEBUG_MODE] updateMerciYanisTicketToCorrectStep: Would update MerciYanis ticket ${clientTicket._id} status to "${this.mappingSteps.get(currentStep.name.get())}"`);
+      } else {
+        this.apiClient.updateTicket(clientTicket._id, { status: this.mappingSteps.get(currentStep.name.get()) });
+      }
     }
 
     return;
@@ -501,6 +523,11 @@ export class SyncRunPullApi {
     const currentStepIndex = this.allStepNames.indexOf(currentStep.name.get());
     const targetStepIndex = this.allStepNames.indexOf(targetStepName);
     if (targetStepIndex <= currentStepIndex) {
+      return;
+    }
+
+    if (this.debugMode) {
+      console.log(`[DEBUG_MODE] [updateSpinalTicketToCorrectStep] Would move Spinal ticket (MYId: ${clientTicket._id} | ${clientTicket._number}) from "${currentStep.name.get()}" to "${targetStep.name.get()}" to match MerciYanis status ${clientTicket.status}`);
       return;
     }
 
@@ -619,6 +646,12 @@ export class SyncRunPullApi {
         description: `${ticketAttrs.declarer_id || 'unknown declarer'} / Localisation : ${libelle} \n ${ticketAttrs.description}` || ''
       };
 
+      if (this.debugMode) {
+        console.log(`[DEBUG_MODE] syncPush: Would create MerciYanis ticket for Spinal ticket "${spinalTicketName}" with payload:`, ticketPayload);
+        console.log(`[DEBUG_MODE] syncPush: Would then store MY id/number/date/location as attributes on the Spinal ticket${targetStatus !== 'NEW' ? ` and set MerciYanis status to "${targetStatus}"` : ' (status stays NEW)'}`);
+        continue;
+      }
+
       const pushKey = `${myTicketName}|${locationId}`;
       this.currentlyPushingTickets.add(pushKey);
       try {
@@ -730,6 +763,14 @@ export class SyncRunPullApi {
         if (!roomNode) {
           continue;
         }
+
+        if (this.debugMode) {
+          const moveNote = clientTicket.status != 'NEW' ? ` then move it to the step matching status "${clientTicket.status}"` : '';
+          const gmaoNote = needsGmaoId ? ' (+ gmaoId=-1 on node.info)' : '';
+          console.log(`[DEBUG_MODE] syncFromFetch: Would create Spinal ticket "${ticketInfo.name}" at room "${roomNode.getName().get()}"${gmaoNote}${moveNote}`, ticketInfo);
+          continue;
+        }
+
         const ticketNodeId = await spinalServiceTicket.addTicket(
           ticketInfo,
           this.getProcessNodeFromTicketName(clientTicket.title.trim()).getId().get(),
@@ -761,6 +802,9 @@ export class SyncRunPullApi {
 
   async init(): Promise<void> {
     console.log('Initiating SyncRunPull');
+    if (this.debugMode) {
+      console.log('⚠️  [DEBUG_MODE] Dry-run enabled — no real modifications will be made; all writes are logged only.');
+    }
     try {
       // Init useful nodes
       this.ticketContextNode = await this.getTicketContext();
@@ -808,7 +852,11 @@ export class SyncRunPullApi {
       await this.syncFromFetch(filteredTickets);
 
       await this.syncPush();
-      this.config.lastSync.set(Date.now());
+      if (this.debugMode) {
+        console.log('[DEBUG_MODE] Would update config.lastSync');
+      } else {
+        this.config.lastSync.set(Date.now());
+      }
       console.log('Init DONE !');
     } catch (e) {
       console.error(e);
@@ -817,6 +865,9 @@ export class SyncRunPullApi {
 
   async run(): Promise<void> {
     console.log('Starting run...');
+    if (this.debugMode) {
+      console.log('⚠️  [DEBUG_MODE] Dry-run enabled — no real modifications will be made; all writes are logged only.');
+    }
     this.running = true;
     const timeout = parseInt(process.env.PULL_INTERVAL!);
     await this.waitFct(timeout);
@@ -836,7 +887,11 @@ export class SyncRunPullApi {
         await this.syncPush();
 
         console.log('... Run finished !');
-        this.config.lastSync.set(Date.now());
+        if (this.debugMode) {
+          console.log('[DEBUG_MODE] Would update config.lastSync');
+        } else {
+          this.config.lastSync.set(Date.now());
+        }
       } catch (e) {
         console.error(e);
         await this.waitFct(1000 * 60);
