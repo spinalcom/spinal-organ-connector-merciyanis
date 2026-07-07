@@ -284,6 +284,45 @@ export class SyncRunPullApi {
   }
 
 
+  /**
+   * Finds a Spinal ticket node that already carries the given MerciYanis id (MYId attribute), used for
+   * durable idempotency so a ticket pushed by syncPush is not re-created when MerciYanis echoes back its
+   * CREATE_TICKET webhook.
+   *
+   * Only the propreté process is scanned: MerciYanis only ever creates propreté tickets, so a CREATE_TICKET
+   * echo can only match a propreté ticket. And a newly created/pushed ticket always lands in the process's
+   * first step (order 0), so we scan just that step rather than every ticket — closed/in-progress tickets can
+   * never match a just-created CREATE_TICKET, so scanning them would be wasteful.
+   */
+  private async findSpinalTicketByMYId(myId: string): Promise<SpinalNode<any> | undefined> {
+    const processes = [
+      { steps: this.ticketPropreteStepNodes, processNode: this.ticketProcessNodeProprete }
+    ];
+
+    for (const { steps, processNode } of processes) {
+      const firstStep = steps.find((step) => step.order?.get() === 0);
+
+      let ticketNodes: SpinalNode<any>[];
+      if (firstStep) {
+        const firstStepNode = SpinalGraphService.getRealNode(firstStep.id.get());
+        if (!firstStepNode) continue;
+        ticketNodes = await firstStepNode.getChildren(['SpinalSystemServiceTicketHasTicket']);
+      } else {
+        // First step not identifiable — fall back to a full process scan to stay correct.
+        console.warn('findSpinalTicketByMYId: first step (order 0) not found, falling back to full process scan.');
+        ticketNodes = await processNode.findInContextByType(this.ticketContextNode, 'SpinalSystemServiceTicketTypeTicket');
+      }
+
+      for (const ticketNode of ticketNodes) {
+        const info = await getTicketInfo(ticketNode, ['MYId']);
+        if (info.MYId === myId) {
+          return ticketNode;
+        }
+      }
+    }
+    return undefined;
+  }
+
   private onCreateTicket = async (evt: WebhookEvent<TicketWebhookPayload>) => {
     if (this.seenDeliveries.has(evt.deliveryId)) return;
     this.seenDeliveries.add(evt.deliveryId);
@@ -295,10 +334,18 @@ export class SyncRunPullApi {
         return;
       }
 
-      // Skip if this ticket is being pushed by syncPush (race condition guard)
+      // Fast-path guard: skip if this ticket is being pushed by syncPush right now (sub-second window).
       const pushKey = `${ticketMerciYanis.title.trim()}|${ticketMerciYanis.location}`;
       if (this.currentlyPushingTickets.has(pushKey)) {
         console.log(`Ignoring CREATE_TICKET webhook for "${ticketMerciYanis.title}" — already being pushed by syncPush`);
+        return;
+      }
+
+      // Durable guard: if a Spinal ticket already carries this MerciYanis id, this webhook is either our
+      // own syncPush push echoing back, or a ticket already imported — do not create a duplicate.
+      const existingTicket = await this.findSpinalTicketByMYId(ticketMerciYanis._id);
+      if (existingTicket) {
+        console.log(`Ignoring CREATE_TICKET webhook for MY ticket ${ticketMerciYanis._id} — a Spinal ticket with this MYId already exists.`);
         return;
       }
 
@@ -478,7 +525,7 @@ export class SyncRunPullApi {
     if (currentClientStepIndex < currentStepIndex) {
       console.log(`Ticket (ID: ${clientTicket._id} | ${clientTicket._number}) 
         GMAO_ID : ${matchingNode.info.gmaoId?.get()}
-        SERVER_ID : ${matchingNode._serverId} 
+        SERVER_ID : ${matchingNode._server_id} 
         status in MerciYanis is behind the current step in Spinal 
         (${clientTicket.status} < ${currentStep.name.get()}). 
         Sending update to step ${this.mappingSteps.get(currentStep.name.get())}`);
@@ -498,6 +545,7 @@ export class SyncRunPullApi {
    * Only moves the ticket FORWARD: if MerciYanis appears behind Spinal's current step, Spinal is left untouched.
    */
   private async updateSpinalTicketToCorrectStep(clientTicket: ITicket, matchingNode: SpinalNode<any>) {
+    SpinalGraphService._addNode(matchingNode); // without this the spinalServiceTicket.moveTicket will not do anything ( matchingNode undefined )
     const info = await getTicketInfo(matchingNode, ['stepId']);
     const stepId = info.stepId;
 
